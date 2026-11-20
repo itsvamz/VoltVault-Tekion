@@ -5,8 +5,18 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from pathlib import Path
 
-Path("data").mkdir(exist_ok=True)
-engine = create_engine(os.getenv("DATABASE_URL", "sqlite:///./data/battery.db"))
+if os.getenv("VERCEL") == "1":
+    database_url = os.getenv("DATABASE_URL", "")
+    if not database_url or database_url.startswith("sqlite"):
+        database_url = "sqlite:////tmp/battery.db"
+else:
+    Path("data").mkdir(exist_ok=True)
+    database_url = os.getenv("DATABASE_URL", "sqlite:///./data/battery.db")
+
+engine = create_engine(
+    database_url,
+    connect_args={"check_same_thread": False} if database_url.startswith("sqlite") else {},
+)
 
 
 def serialize_write(connection):
