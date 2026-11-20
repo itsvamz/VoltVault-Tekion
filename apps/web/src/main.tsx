@@ -209,8 +209,11 @@ type Payload = {
   limitations: string;
 };
 const qc = new QueryClient();
+const API_BASE = "https://api-git-main-vamika-mendirattas-projects.vercel.app";
+
 async function api<T = any>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch("/api" + path, {
+  const r = await fetch(API_BASE + "/api" + path, {
+    credentials: "include",
     method: body === undefined ? "GET" : "POST",
     headers:
       body instanceof FormData ? {} : { "Content-Type": "application/json" },

@@ -4,6 +4,7 @@ import secrets
 import hashlib
 import json
 import io
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import date, timedelta
 from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, Response, Request, UploadFile, File
@@ -30,7 +31,13 @@ seed_warranty_examples()
 seed_metadata()
 app = FastAPI(title="Battery Timeline", version="0.1.0")
 
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://volt-vault-tekion.vercel.app"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.exception_handler(OperationalError)
 async def database_unavailable(request, error):
     # Do not expose connection strings or database exception details to clients.
@@ -73,6 +80,7 @@ def actor(request: Request, s=Depends(db)):
         not in (
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "https://volt-vault-tekion.vercel.app",
             os.getenv("PUBLIC_BASE_URL", "http://localhost:5173"),
         )
     ):
@@ -160,9 +168,9 @@ def login(body: Login, response: Response, s=Depends(db)):
         "bt_session",
         token,
         httponly=True,
-        samesite="strict",
+        samesite="none",
         max_age=28800,
-        secure=os.getenv("COOKIE_SECURE") == "true",
+        secure=True,
     )
     return a
 
