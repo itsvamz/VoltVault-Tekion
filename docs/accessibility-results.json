@@ -2,12 +2,16 @@
   {
     "name": "demo sign-in / desktop",
     "violations": [],
-    "incomplete": []
+    "incomplete": [
+      "color-contrast"
+    ]
   },
   {
     "name": "work queue / desktop",
     "violations": [],
-    "incomplete": []
+    "incomplete": [
+      "aria-prohibited-attr"
+    ]
   },
   {
     "name": "Timeline and appraisal / desktop",
@@ -19,14 +23,14 @@
   {
     "name": "sources and policy / desktop",
     "violations": [],
-    "incomplete": []
+    "incomplete": [
+      "link-in-text-block"
+    ]
   },
   {
     "name": "service capture / mobile",
     "violations": [],
-    "incomplete": [
-      "color-contrast"
-    ]
+    "incomplete": []
   },
   {
     "name": "work queue / mobile",

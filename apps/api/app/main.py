@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from PIL import Image
 import qrcode
 from .store import engine, migrate, seed, put, get, all_records, now, today
-from .domain import assess, appraisal, POLICY
+from .domain import assess, appraisal, remaining_life, POLICY
 from .warranty import coverage, RULES, US_STATES
 from .store import seed_warranty_examples, seed_metadata
 from .store import serialize_write, consume_public_request
@@ -96,6 +96,19 @@ def readings(s, id, a):
     return [r for r in all_records(s, "reading", a["dealer"]) if r["vehicle"] == id]
 
 
+def evidence_state(s, v, a):
+    """Distinguish a fresh trade-in baseline from an actual service history."""
+    confirmed = [
+        r
+        for r in readings(s, v["id"], a)
+        if r["state"] == "confirmed" and r["pack"] == v["pack"]
+    ]
+    if not confirmed:
+        return "none"
+    service = [r for r in confirmed if r.get("origin", "service") != "intake"]
+    return "history" if service else "baseline_only"
+
+
 def assessment(s, v, a):
     return assess(readings(s, v["id"], a), v["pack"], today())
 
@@ -118,13 +131,17 @@ def current_policy(s, a):
 
 def detail(s, v, a):
     h = assessment(s, v, a)
+    p = current_policy(s, a)
     return dict(
         v,
         assessment=h,
+        life=remaining_life(h, p["reference_health"] if a["role"] == "manager" else None),
         warranty=coverage(v, today()),
-        recommendation=appraisal(h, v["base"], v["included"], current_policy(s, a)),
-        policy=current_policy(s, a),
+        recommendation=appraisal(h, v["base"], v["included"], p),
+        policy=p,
         readings=readings(s, v["id"], a),
+        evidence_state=evidence_state(s, v, a),
+        baseline=v.get("baseline"),
     )
 
 
@@ -189,6 +206,33 @@ def one(id: str, a=Depends(actor), s=Depends(db)):
     return staff_summary(result, a["role"])
 
 
+@app.post("/api/vehicles/{id}/intake-visit")
+def intake_visit(id: str, a=Depends(actor), s=Depends(db)):
+    """Open the acquisition baseline for a vehicle that has no service history yet."""
+    permit(a, ["manager", "technician"])
+    v = vehicle(s, id, a)
+    vid = "intake-" + id
+    existing = get(s, "visit", vid, a["dealer"])
+    if existing:
+        return existing
+    if evidence_state(s, v, a) == "history":
+        fail(
+            "history_exists",
+            "This vehicle already has service history. Capture a service reading instead.",
+            409,
+        )
+    visit = {
+        "id": vid,
+        "vehicle": id,
+        "ro": "INTAKE-" + v["stock"],
+        "state": "Acquisition intake",
+        "kind": "intake",
+    }
+    put(s, "visit", vid, visit, a["dealer"])
+    audit(s, a, id, "Acquisition intake opened")
+    return visit
+
+
 class Reading(BaseModel):
     value: float = Field(ge=0, le=100, allow_inf_nan=False)
     measurement: Literal["health", "charge", "ambiguous"]
@@ -236,7 +280,14 @@ def draft(id: str, b: Reading, a=Depends(actor), s=Depends(db)):
                 "vehicle_mismatch",
                 "The image identifies another VIN. Review the source before confirming.",
             )
-    d = dict(b.model_dump(mode="json"), id=uid(), vehicle=v["id"], visit=id, state="draft")
+    d = dict(
+        b.model_dump(mode="json"),
+        id=uid(),
+        vehicle=v["id"],
+        visit=id,
+        state="draft",
+        origin="intake" if visit.get("kind") == "intake" else "service",
+    )
     put(s, "draft", d["id"], d, a["dealer"])
     return d
 
@@ -278,6 +329,7 @@ def confirm(id: str, a=Depends(actor), s=Depends(db)):
             fail(
                 "odometer", "Odometer conflicts with recorded history. Review the original reading."
             )
+    origin = d.get("origin", "service")
     r = dict(
         d,
         state="confirmed",
@@ -286,12 +338,16 @@ def confirm(id: str, a=Depends(actor), s=Depends(db)):
         raw_value=d["value"],
         actor=a["role"],
         created_at=now(),
-        provenance="Dealer-entered observation",
+        provenance="Acquisition baseline test"
+        if origin == "intake"
+        else "Dealer-entered observation",
     )
     source = SourceRecord(
         id=id,
         vehicle=v["id"],
-        title="Confirmed capacity observation",
+        title="Acquisition baseline observation"
+        if origin == "intake"
+        else "Confirmed capacity observation",
         provider=r["source"],
         provenance="dealer entered",
         retrieved_at=now(),
@@ -301,16 +357,37 @@ def confirm(id: str, a=Depends(actor), s=Depends(db)):
     put(s, "reading", id, r, a["dealer"])
     visit = get(s, "visit", d.get("visit", v["id"]), a["dealer"])
     if visit:
-        visit.update(state="Battery evidence confirmed", latest_reading=id)
+        visit.update(
+            state="Acquisition baseline recorded" if origin == "intake" else "Battery evidence confirmed",
+            latest_reading=id,
+        )
         put(s, "visit", visit["id"], visit, a["dealer"])
     d["state"] = "confirmed"
     put(s, "draft", id, d, a["dealer"])
     v["miles"] = max(v["miles"], miles)
+    if origin == "intake":
+        v["baseline"] = {
+            "reading_id": id,
+            "date": d["date"],
+            "value": d["value"],
+            "source": d["source"],
+            "method": d.get("method"),
+            "reference_basis": d.get("reference_basis"),
+            "attachment": d.get("attachment"),
+            "recorded_at": now(),
+        }
     v["revision"] += 1
     put(s, "vehicle", v["id"], v, a["dealer"])
     h = assessment(s, v, a)
     put(s, "assessment", uid(), h, a["dealer"])
-    audit(s, a, v["id"], "Reading confirmed; assessment completed")
+    audit(
+        s,
+        a,
+        v["id"],
+        "Acquisition baseline confirmed; assessment completed"
+        if origin == "intake"
+        else "Reading confirmed; assessment completed",
+    )
     return {"reading": r, "assessment": h, "status": "completed"}
 
 
@@ -463,6 +540,21 @@ def report(id: str, b: ReportOptions | None = None, a=Depends(actor), s=Depends(
         for r in readings(s, id, a)
         if r["id"] in h["input_ids"]
     ]
+    state = evidence_state(s, v, a)
+    confirmed_current = [
+        r for r in readings(s, id, a) if r["state"] == "confirmed" and r["pack"] == v["pack"]
+    ]
+    intake_count = sum(1 for r in confirmed_current if r.get("origin") == "intake")
+    service_count = len(confirmed_current) - intake_count
+    limitations = (
+        "Illustrative estimate from available capacity readings. Not independent certification or a "
+        "guarantee of future performance. Current pack only."
+    )
+    if state == "baseline_only":
+        limitations += (
+            " This version relies on an acquisition baseline test; no dealer service history is "
+            "recorded yet."
+        )
     payload = {
         "title": "Battery Health Report",
         "subtitle": "Dealer-issued evidence summary",
@@ -474,6 +566,7 @@ def report(id: str, b: ReportOptions | None = None, a=Depends(actor), s=Depends(
         "quality": h["quality"],
         "reason": h["reason"],
         "warnings": h["warnings"],
+        "life": remaining_life(h),
         "readings": rs,
         "pack": v["pack"],
         "pack_context": {k: segment.get(k) for k in ["start_date", "verification"]}
@@ -485,7 +578,12 @@ def report(id: str, b: ReportOptions | None = None, a=Depends(actor), s=Depends(
         "as_of": str(today()),
         "expires_on": str(today() + timedelta(days=b.valid_days)),
         "generated_at": now(),
-        "limitations": "Illustrative estimate from available capacity readings. Not independent certification or a guarantee of future performance. Current pack only.",
+        "evidence_basis": {
+            "state": state,
+            "intake_readings": intake_count,
+            "service_readings": service_count,
+        },
+        "limitations": limitations,
     }
     rid = uid()
     version = 1 + sum(r["vehicle"] == id for r in all_records(s, "report", a["dealer"]))

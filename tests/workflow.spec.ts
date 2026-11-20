@@ -1,11 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
+import { signIn } from "./helpers";
 test("capture through immutable report with SOC guard", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Continue as manager" }).click();
-  await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
-  ).toBeVisible();
+  await signIn(page);
   await expect(page.locator(".loading")).toHaveCount(0);
   await page.screenshot({ path: "docs/queue-desktop.png", fullPage: true });
   await page.goto("/service/2/capture");
@@ -67,7 +64,7 @@ test("capture through immutable report with SOC guard", async ({ page }) => {
       page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     )
     .toBeTruthy();
-  await page.goto("/work-queue");
+  await page.goto("/vehicles");
   await expect(page.locator(".loading")).toHaveCount(0);
   await expect(page.getByText("26 vehicles in inventory")).toBeAttached();
   await page.screenshot({ path: "docs/queue-mobile.png", fullPage: true });

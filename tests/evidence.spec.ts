@@ -1,12 +1,6 @@
 import { existsSync } from "node:fs";
 import { test, expect } from "@playwright/test";
-async function signIn(page: any, role: string) {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Continue as " + role }).click();
-  await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
-  ).toBeVisible();
-}
+import { signIn } from "./helpers";
 test("actual photo OCR distinguishes health and charge, drafts survive navigation", async ({
   page,
 }) => {
@@ -130,7 +124,8 @@ test("sales sees summaries and published reports without private offer data", as
     page.getByRole("heading", { name: "Battery reports" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Sign out" }).click();
+  await page.goto("/login");
   await expect(
-    page.getByRole("button", { name: "Continue as sales" }),
+    page.getByRole("button", { name: /Sales associate/ }),
   ).toBeVisible();
 });

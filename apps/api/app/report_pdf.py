@@ -16,6 +16,31 @@ from reportlab.lib import colors
 from reportlab.graphics.shapes import Drawing, Line, Circle, String
 
 
+def years(months):
+    value = months / 12
+    return f"{value:.0f} years" if months >= 120 else f"{value:.1f} years"
+
+
+def life_span(threshold):
+    months = threshold.get("months_range")
+    if not months:
+        return "Not projectable"
+    if threshold.get("state") == "at_or_below" or months[1] == 0:
+        return "At or below now"
+    if threshold.get("beyond_horizon"):
+        return "Beyond 20 years"
+    low, high = months
+    return f"up to {years(high)}" if low == 0 else f"{years(low)}–{years(high)}"
+
+
+def life_miles(threshold):
+    miles = threshold.get("miles_range")
+    if not miles or miles[1] == 0:
+        return "Unknown"
+    low, high = miles
+    return f"up to {high:,.0f} mi" if low == 0 else f"{low:,.0f}–{high:,.0f} mi"
+
+
 def render(payload, url, integrity):
     p = payload
     b = BytesIO()
@@ -48,6 +73,46 @@ def render(payload, url, integrity):
     para(f"Evidence quality: {p['quality']}. {p['reason']}")
     if p["last"]:
         para(f"Last recorded reading: {p['last']['value']:g}% on {p['last']['date']}")
+    life = p.get("life") or {}
+    if life.get("status") == "projected":
+        para("Projected usable life", "Heading2")
+        lead = next(
+            (
+                t
+                for t in life["thresholds"]
+                if t["state"] == "projected" and not t["beyond_horizon"]
+            ),
+            None,
+        )
+        if lead:
+            para(
+                f"At the observed loss of {life['annual_loss_pp']:g} percentage points per year, "
+                f"this pack is projected to stay above {lead['percent']:g}% for about "
+                f"{life_span(lead)}."
+            )
+        rows = [["Reference level", "Projected above this level", "Further distance"]] + [
+            [f"{t['percent']:g}% - {t['label']}", life_span(t), life_miles(t)]
+            for t in life["thresholds"]
+        ]
+        table = Table(rows, repeatRows=1, colWidths=[190, 170, 130])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#edf6f3")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#dde4e8")),
+                ]
+            )
+        )
+        story.append(table)
+        story.append(Spacer(1, 8))
+        para(life["disclaimer"])
+    elif life.get("status") == "stable":
+        para("Projected usable life", "Heading2")
+        para(life["reason"] + ". " + life["disclaimer"])
     para("Current-pack Timeline", "Heading2")
     para("Pack: " + p["pack"] + ". Earlier pack readings are excluded from this estimate.")
     if p.get("pack_context") and p["pack_context"].get("start_date"):
@@ -113,10 +178,12 @@ def render(payload, url, integrity):
     q = BytesIO()
     qrcode.make(url).save(q, format="PNG")
     q.seek(0)
+    # Keep the whole closing block together so a single integrity line can never
+    # spill onto an otherwise blank page.
     story.append(
         KeepTogether(
             [
-                Spacer(1, 12),
+                Spacer(1, 8),
                 Table(
                     [
                         [
@@ -131,13 +198,19 @@ def render(payload, url, integrity):
                     ],
                     colWidths=[110, 380],
                 ),
+                Paragraph(escape(url), styles["BodyText"]),
+                Paragraph(escape(p["dealer"]), styles["BodyText"]),
+                Paragraph("Generated: " + escape(p["generated_at"]), styles["BodyText"]),
+                Paragraph(
+                    "Integrity ID: "
+                    + escape(
+                        integrity[:24] + " (snapshot identity, not manufacturer verification)"
+                    ),
+                    styles["BodyText"],
+                ),
             ]
         )
     )
-    para(url)
-    para(p["dealer"])
-    para("Generated: " + p["generated_at"])
-    para("Integrity ID: " + integrity[:24] + " (snapshot identity, not manufacturer verification)")
 
     def page(c, doc):
         c.saveState()

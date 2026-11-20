@@ -54,6 +54,12 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceLine,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  Legend,
 } from "recharts";
 import "./style.css";
 import {
@@ -88,11 +94,30 @@ type Reading = {
   state: string;
   actor: string;
   provenance: string;
+  origin?: "service" | "intake";
   attachment?: string;
   method?: string;
   reference_basis?: string;
   exclusion_reason?: string;
   amendment_reason?: string;
+};
+type LifeThreshold = {
+  percent: number;
+  label: string;
+  state: "projected" | "at_or_below" | "no_measurable_loss" | "not_projectable";
+  months_range: number[] | null;
+  miles_range: number[] | null;
+  beyond_horizon: boolean;
+};
+type Life = {
+  method: string;
+  status: "projected" | "stable" | "insufficient_evidence";
+  reason: string;
+  annual_loss_pp: number | null;
+  annual_miles: number | null;
+  horizon_months: number;
+  thresholds: LifeThreshold[];
+  disclaimer: string;
 };
 type Assessment = {
   as_of: string;
@@ -124,7 +149,17 @@ type Vehicle = GovernanceVehicle & {
   included: string;
   revision: number;
   assessment: Assessment;
+  life: Life;
   readings: Reading[];
+  evidence_state?: "none" | "baseline_only" | "history";
+  baseline?: {
+    reading_id: string;
+    date: string;
+    value: number;
+    source: string;
+    method?: string;
+    reference_basis?: string;
+  } | null;
   events: { id: string; date: string; type: string; notes: string }[];
   decisions: {
     id: string;
@@ -159,10 +194,16 @@ type Payload = {
   last: { date: string; value: number } | null;
   readings: Reading[];
   pack: string;
+  life?: Life;
   warranty: string;
   dealer: string;
   as_of: string;
   generated_at: string;
+  evidence_basis?: {
+    state: "none" | "baseline_only" | "history";
+    intake_readings: number;
+    service_readings: number;
+  };
   pack_context?: { start_date?: string; verification?: string };
   expires_on?: string;
   limitations: string;
@@ -210,6 +251,81 @@ const date = (d: string) =>
   });
 const interval = (n: number[] | null) =>
   n ? `${n[0]}–${n[1]}%` : "Not enough evidence";
+const monthsLabel = (m: number) =>
+  m >= 120 ? `${Math.round(m / 12)} yrs` : `${(m / 12).toFixed(1)} yrs`;
+function lifeRange(t: LifeThreshold) {
+  if (!t.months_range) return "Not projectable";
+  if (t.state === "at_or_below") return "At or below now";
+  if (t.beyond_horizon) return "Beyond 20 yrs";
+  const [lo, hi] = t.months_range;
+  if (hi === 0) return "At or below now";
+  return lo === 0
+    ? `≤ ${monthsLabel(hi)}`
+    : `${monthsLabel(lo)} – ${monthsLabel(hi)}`;
+}
+function lifeMiles(t: LifeThreshold) {
+  if (!t.miles_range) return "";
+  const k = (n: number) => `${Math.round(n / 1000).toLocaleString()}k mi`;
+  const [lo, hi] = t.miles_range;
+  if (hi === 0) return "";
+  return lo === 0 ? `≤ ${k(hi)}` : `${k(lo)} – ${k(hi)}`;
+}
+function LifeBlock({
+  life,
+  variant = "staff",
+}: {
+  life: Life;
+  variant?: "staff" | "buyer";
+}) {
+  const lead = life.thresholds.find(
+    (t) => t.state === "projected" && !t.beyond_horizon,
+  );
+  return (
+    <section
+      className={"life-block " + variant}
+      aria-label="Projected usable life"
+    >
+      <div className="life-head">
+        <small>PROJECTED USABLE LIFE</small>
+        <Badge tone={life.status === "projected" ? "teal" : "amber"}>
+          {life.status === "projected"
+            ? `${life.annual_loss_pp} pts/yr observed`
+            : life.status.replace(/_/g, " ")}
+        </Badge>
+      </div>
+      {life.status === "projected" ? (
+        <>
+          {lead && (
+            <p className="life-lead">
+              At the observed rate this pack stays above{" "}
+              <strong>{lead.percent}%</strong> for about{" "}
+              <strong>{lifeRange(lead)}</strong>
+              {lifeMiles(lead) ? ` · ${lifeMiles(lead)}` : ""}.
+            </p>
+          )}
+          <dl className="life-rows">
+            {life.thresholds.map((t) => (
+              <div key={t.percent}>
+                <dt>
+                  <strong>{t.percent}%</strong> {t.label}
+                </dt>
+                <dd>
+                  {lifeRange(t)}
+                  {t.miles_range && t.state !== "at_or_below" && (
+                    <small>{lifeMiles(t)}</small>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      ) : (
+        <p className="life-lead">{life.reason}</p>
+      )}
+      <p className="life-note">{life.disclaimer}</p>
+    </section>
+  );
+}
 function Badge({
   children,
   tone = "neutral",
@@ -567,142 +683,426 @@ function readLocalDraft(key: string) {
     return null;
   }
 }
+function EVIllustration({ className = "" }: { className?: string }) {
+  return (
+    <svg className={"ev-illust " + className} viewBox="0 0 320 180" fill="none" aria-hidden="true">
+      <rect x="60" y="60" width="200" height="90" rx="20" fill="var(--forest)" opacity="0.12" />
+      <rect x="80" y="50" width="160" height="80" rx="16" stroke="var(--green)" strokeWidth="2" opacity="0.3" />
+      <rect x="240" y="72" width="10" height="24" rx="4" fill="var(--green)" opacity="0.3" />
+      {[95, 90, 85, 78, 70].map((h, i) => (
+        <rect key={i} x={94 + i * 26} y={120 - h * 0.6} width={16} height={h * 0.6} rx={3}
+          fill={`rgba(22,163,74,${0.25 + i * 0.15})`}
+          className="hero-bar" style={{ animationDelay: `${i * 0.1}s` }} />
+      ))}
+      <circle cx="260" cy="40" r="16" fill="var(--green-mint)" opacity="0.15" />
+      <path d="M254 40l4-6h4l-4 6h4l-8 10 2-6h-4l4-6z" fill="var(--green)" opacity="0.6" />
+      <circle cx="50" cy="100" r="24" fill="var(--green-paper-light)" opacity="0.3" />
+      <path d="M42 100 l4-8h4l-2 4h4l-8 12 2-6h-4z" fill="var(--green)" opacity="0.4" />
+    </svg>
+  );
+}
+function DashWelcome({ role, name }: { role: string; name: string }) {
+  const info: Record<string, { greeting: string; desc: string; Icon: typeof Briefcase }> = {
+    manager: { greeting: "Appraisal Desk", desc: "Review evidence, set pricing policy, and publish buyer reports.", Icon: Briefcase },
+    technician: { greeting: "Service Lane", desc: "Capture battery readings and build sourced evidence histories.", Icon: Wrench },
+    sales: { greeting: "Sales Floor", desc: "Browse vehicle health summaries and share published reports with buyers.", Icon: Users },
+  };
+  const r = info[role] || info.manager;
+  return (
+    <div className="dash-welcome">
+      <div className="dash-welcome-text">
+        <span className="kicker">{name} · {role}</span>
+        <h1>{r.greeting}</h1>
+        <p>{r.desc}</p>
+      </div>
+      <div className="dash-welcome-visual">
+        <EVIllustration />
+      </div>
+    </div>
+  );
+}
 function Dashboard() {
+  const session = qc.getQueryData(["session"]) as { role: string; dealer_name: string; as_of: string } | undefined;
+  const role = session?.role || "manager";
   const q = useQuery({
     queryKey: ["vehicles"],
     queryFn: () => api<{ items: Vehicle[]; total: number }>("/vehicles"),
   });
+  const rq = useQuery({
+    queryKey: ["reports"],
+    queryFn: () => api<Report[]>("/reports"),
+    enabled: role !== "technician",
+  });
   if (q.isPending) return <Loading />;
   const items = q.data?.items || [];
-  const needing = items.filter(
-    (v) => v.assessment.quality === "limited",
-  ).length;
-  const healthy = items.filter(
-    (v) => v.assessment.interval && v.assessment.interval[1] >= 85,
-  ).length;
+  const reports = rq.data || [];
+  const needing = items.filter((v) => v.assessment.quality === "limited").length;
+  const healthy = items.filter((v) => v.assessment.interval && v.assessment.interval[1] >= 85).length;
+  const noEvidence = items.filter((v) => !v.assessment.interval).length;
   const midpoints = items.flatMap((v) =>
-    v.assessment.interval
-      ? [Math.round((v.assessment.interval[0] + v.assessment.interval[1]) / 2)]
-      : [],
+    v.assessment.interval ? [Math.round((v.assessment.interval[0] + v.assessment.interval[1]) / 2)] : [],
   );
-  const avg = midpoints.length
-    ? Math.round(midpoints.reduce((a, b) => a + b, 0) / midpoints.length)
-    : 0;
-  const stats = [
-    { num: String(items.length), label: "EVs onboard", tone: "" },
-    { num: String(healthy), label: "Healthy packs", tone: "" },
-    { num: needing ? String(needing) : "—", label: "Needs review", tone: "" },
-    { num: `${avg}%`, label: "Avg battery health", tone: "" },
-  ];
-  return (
-    <div className="forest">
-      <section
-        style={{ background: "var(--forest)", color: "#fff" }}
-        aria-label="Portal overview"
-      >
-        <div className="section">
-          <div className="page-head">
-            <span className="kicker">Portal · Northline Motors</span>
-            <span className="display display-light">
-              Your green readiness, in one glance.
-            </span>
-            <p style={{ color: "#fff7e4", fontSize: 19, maxWidth: 540 }}>
-              Visible EV readiness for dealers: availability, supply health, and
-              readiness posture at a glance.
-            </p>
+  const avg = midpoints.length ? Math.round(midpoints.reduce((a, b) => a + b, 0) / midpoints.length) : 0;
+  const pct = (part: number, whole: number) => `${Math.round((part / Math.max(1, whole)) * 100)}%`;
+  const publishedReports = reports.filter((r) => r.status === "published").length;
+  const draftReports = reports.filter((r) => r.status === "draft").length;
+
+  const HEALTH_COLORS = ["#16a34a", "#22c55e", "#f59e0b", "#ef4444"];
+  const healthBuckets = (() => {
+    const b = [
+      { name: "Excellent (90%+)", value: 0 },
+      { name: "Good (80–89%)", value: 0 },
+      { name: "Fair (70–79%)", value: 0 },
+      { name: "Poor (<70%)", value: 0 },
+    ];
+    items.forEach((v) => {
+      if (!v.assessment.interval) return;
+      const mid = (v.assessment.interval[0] + v.assessment.interval[1]) / 2;
+      if (mid >= 90) b[0].value++;
+      else if (mid >= 80) b[1].value++;
+      else if (mid >= 70) b[2].value++;
+      else b[3].value++;
+    });
+    return b.filter((x) => x.value > 0);
+  })();
+  const makeDistribution = (() => {
+    const counts: Record<string, number> = {};
+    items.forEach((v) => { counts[v.make] = (counts[v.make] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([make, count]) => ({ make, count }));
+  })();
+  const monthlyReadings = (() => {
+    const months: Record<string, number> = {};
+    items.forEach((v) => {
+      if (v.assessment.last) {
+        const d = new Date(v.assessment.last.date);
+        const key = `${d.toLocaleString("default", { month: "short" })} ${d.getFullYear()}`;
+        months[key] = (months[key] || 0) + 1;
+      }
+    });
+    return Object.entries(months).slice(-6).map(([month, count]) => ({ month, count }));
+  })();
+
+  if (role === "manager") {
+    return (
+      <div className="dash">
+        <DashWelcome role={role} name={session?.dealer_name || "Northline Motors"} />
+
+        <div className="dash-kpi-row">
+          <div className="dash-kpi"><span className="dash-kpi-num">{items.length}</span><span className="dash-kpi-label">EVs onboard</span></div>
+          <div className="dash-kpi"><span className="dash-kpi-num">{healthy}</span><span className="dash-kpi-label">Healthy packs</span></div>
+          <div className="dash-kpi accent"><span className="dash-kpi-num">{needing || 0}</span><span className="dash-kpi-label">Need review</span></div>
+          <div className="dash-kpi"><span className="dash-kpi-num">{avg}%</span><span className="dash-kpi-label">Avg health</span></div>
+        </div>
+
+        <div className="dash-analytics">
+          <div className="dash-chart-card">
+            <h3>Fleet Health Distribution</h3>
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={healthBuckets} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value">
+                  {healthBuckets.map((_, i) => <Cell key={i} fill={HEALTH_COLORS[i]} />)}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="bottom" height={36} />
+              </PieChart>
+            </ResponsiveContainer>
           </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              marginTop: "var(--s4)",
-            }}
-          >
-            <Teedle size={52} />
+          <div className="dash-chart-card">
+            <h3>Inventory by Make</h3>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={makeDistribution} layout="vertical" margin={{ left: 10, right: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis type="number" tick={{ fontSize: 12 }} />
+                <YAxis dataKey="make" type="category" width={80} tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="count" fill="var(--green)" radius={[0, 6, 6, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="dash-chart-card">
+            <h3>Readings Over Time</h3>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={monthlyReadings} margin={{ left: -10, right: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#0d9488" radius={[6, 6, 0, 0]} barSize={24} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
-      </section>
-      <div className="section">
-        <div className="bento" aria-label="Portal overview metrics">
-          {stats.map((s) => (
-            <div className="col stat-tile num-green" key={s.label}>
-              <span className="num num-green" style={{ fontSize: "3.2rem" }}>
-                {s.num}
-              </span>
-              <span className="label" style={{ marginTop: 8 }}>
-                {s.label}
-              </span>
-              {s.num !== "—" && (
-                <div className="bar" style={{ marginTop: 8 }}>
-                  <div className="bar-fills" style={{ width: "100%" }}>
-                    <div
-                      className="bar-fill bar-fill-w"
-                      style={{ width: s.num }}
-                    />
-                  </div>
-                </div>
-              )}
+
+        <div className="dash-quick-grid">
+          <Link to="/vehicles" className="dash-quick-card">
+            <div className="dash-quick-icon" style={{ background: "var(--green-paper-light)" }}><Car size={20} color="var(--green-ink)" /></div>
+            <div><strong>Vehicle inventory</strong><small>Browse all {items.length} EVs, filter and appraise</small></div>
+            <ChevronRight size={16} />
+          </Link>
+          <Link to="/reports" className="dash-quick-card">
+            <div className="dash-quick-icon" style={{ background: "#dbeafe" }}><FileText size={20} color="var(--blue)" /></div>
+            <div><strong>Buyer reports</strong><small>{publishedReports} published, {draftReports} drafts pending</small></div>
+            <ChevronRight size={16} />
+          </Link>
+          <Link to="/settings/sources" className="dash-quick-card">
+            <div className="dash-quick-icon" style={{ background: "#fef3c7" }}><Settings size={20} color="#92400e" /></div>
+            <div><strong>Policy & sources</strong><small>Appraisal policy, warranty rules, data sources</small></div>
+            <ChevronRight size={16} />
+          </Link>
+        </div>
+
+        {needing > 0 && (
+          <section className="dash-alert-card">
+            <div className="dash-alert-icon"><Clock size={18} /></div>
+            <div>
+              <strong>{needing} vehicle{needing > 1 ? "s" : ""} need{needing === 1 ? "s" : ""} attention</strong>
+              <small>Limited evidence — capture more readings or review existing evidence</small>
             </div>
-          ))}
+            <Link to="/vehicles?view=needs" className="btn-minimal">Review →</Link>
+          </section>
+        )}
+
+        <section className="dash-table-section">
+          <div className="section-title">
+            <h2>Recent vehicles</h2>
+            <Badge>{items.length} in inventory</Badge>
+          </div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead>
+                <tr><th>Vehicle</th><th>Pack</th><th>Health</th><th className="num">Last reading</th><th>Appraisal</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                {items.slice(0, 10).map((v) => (
+                  <tr key={v.id}>
+                    <td><strong>{v.year} {v.make} {v.model}</strong><br /><span className="body-small">{v.stock} · {v.miles.toLocaleString()} mi</span></td>
+                    <td><span className="prod-chip">{v.pack}</span></td>
+                    <td className="num">{v.assessment.interval ? `${v.assessment.interval[0]}–${v.assessment.interval[1]}%` : "—"}</td>
+                    <td className="num">{v.assessment.last ? date(v.assessment.last.date) : "—"}</td>
+                    <td>{v.recommendation?.interval ? <Badge tone="teal">Ready</Badge> : <Badge tone="amber">Pending</Badge>}</td>
+                    <td><Link to={"/vehicles/" + v.id} className="btn-minimal">Open →</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {items.length > 10 && (
+            <Link to="/vehicles" className="dash-table-more">View all {items.length} vehicles <ArrowRight size={14} /></Link>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  if (role === "technician") {
+    const needCapture = items.filter((v) => !v.assessment.interval || v.assessment.quality === "limited");
+    const recentlyRead = items.filter((v) => v.assessment.last && v.assessment.age_days != null && v.assessment.age_days <= 30);
+    return (
+      <div className="dash">
+        <DashWelcome role={role} name={session?.dealer_name || "Northline Motors"} />
+        <div className="dash-kpi-row">
+          <div className="dash-kpi"><span className="dash-kpi-num">{items.length}</span><span className="dash-kpi-label">EVs in lot</span></div>
+          <div className="dash-kpi accent"><span className="dash-kpi-num">{needCapture.length}</span><span className="dash-kpi-label">Need capture</span></div>
+          <div className="dash-kpi"><span className="dash-kpi-num">{recentlyRead.length}</span><span className="dash-kpi-label">Read this month</span></div>
+          <div className="dash-kpi"><span className="dash-kpi-num">{avg}%</span><span className="dash-kpi-label">Avg health</span></div>
+        </div>
+
+        <div className="dash-analytics" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div className="dash-chart-card">
+            <h3>Fleet Health Distribution</h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={healthBuckets} cx="50%" cy="50%" innerRadius={50} outerRadius={78} paddingAngle={3} dataKey="value">
+                  {healthBuckets.map((_, i) => <Cell key={i} fill={HEALTH_COLORS[i]} />)}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="bottom" height={36} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="dash-chart-card">
+            <h3>Readings Over Time</h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={monthlyReadings} margin={{ left: -10, right: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#0d9488" radius={[6, 6, 0, 0]} barSize={24} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="dash-quick-grid">
+          <Link to="/vehicles" className="dash-quick-card">
+            <div className="dash-quick-icon" style={{ background: "var(--green-paper-light)" }}><Car size={20} color="var(--green-ink)" /></div>
+            <div><strong>Vehicle inventory</strong><small>Browse vehicles and capture readings</small></div>
+            <ChevronRight size={16} />
+          </Link>
+          <Link to="/vehicles?view=needs" className="dash-quick-card">
+            <div className="dash-quick-icon" style={{ background: "#fef3c7" }}><Camera size={20} color="#92400e" /></div>
+            <div><strong>Needs capture</strong><small>{needCapture.length} vehicles need a battery reading</small></div>
+            <ChevronRight size={16} />
+          </Link>
+        </div>
+        {needCapture.length > 0 && (
+          <section className="dash-table-section">
+            <div className="section-title">
+              <h2>Capture queue</h2>
+              <Badge tone="amber">{needCapture.length} pending</Badge>
+            </div>
+            <div className="table-wrap">
+              <table className="tbl">
+                <thead>
+                  <tr><th>Vehicle</th><th>Pack</th><th>Status</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {needCapture.slice(0, 10).map((v) => (
+                    <tr key={v.id}>
+                      <td><strong>{v.year} {v.make} {v.model}</strong><br /><span className="body-small">{v.stock} · {v.miles.toLocaleString()} mi</span></td>
+                      <td><span className="prod-chip">{v.pack}</span></td>
+                      <td>{!v.assessment.interval ? <Badge tone="amber">No evidence</Badge> : <Badge tone="amber">Limited</Badge>}</td>
+                      <td><Link to={v.assessment.count ? "/vehicles/" + v.id : "/service/" + v.id + "/capture"} className="btn-minimal">{v.assessment.count ? "Open →" : "Capture →"}</Link></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+        <section className="dash-table-section">
+          <div className="section-title">
+            <h2>All vehicles</h2>
+            <Badge>{items.length} in inventory</Badge>
+          </div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead>
+                <tr><th>Vehicle</th><th>Pack</th><th>Health</th><th className="num">Last reading</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                {items.slice(0, 10).map((v) => (
+                  <tr key={v.id}>
+                    <td><strong>{v.year} {v.make} {v.model}</strong><br /><span className="body-small">{v.stock} · {v.miles.toLocaleString()} mi</span></td>
+                    <td><span className="prod-chip">{v.pack}</span></td>
+                    <td className="num">{v.assessment.interval ? `${v.assessment.interval[0]}–${v.assessment.interval[1]}%` : "—"}</td>
+                    <td className="num">{v.assessment.last ? date(v.assessment.last.date) : "—"}</td>
+                    <td><Link to={"/vehicles/" + v.id} className="btn-minimal">Open →</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {items.length > 10 && (
+            <Link to="/vehicles" className="dash-table-more">View all {items.length} vehicles <ArrowRight size={14} /></Link>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  // Sales role
+  return (
+    <div className="dash">
+      <DashWelcome role={role} name={session?.dealer_name || "Northline Motors"} />
+      <div className="dash-kpi-row">
+        <div className="dash-kpi"><span className="dash-kpi-num">{items.length}</span><span className="dash-kpi-label">Vehicles available</span></div>
+        <div className="dash-kpi"><span className="dash-kpi-num">{healthy}</span><span className="dash-kpi-label">Healthy packs</span></div>
+        <div className="dash-kpi"><span className="dash-kpi-num">{avg}%</span><span className="dash-kpi-label">Avg health</span></div>
+        <div className="dash-kpi"><span className="dash-kpi-num">{publishedReports}</span><span className="dash-kpi-label">Published reports</span></div>
+      </div>
+
+      <div className="dash-analytics" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <div className="dash-chart-card">
+          <h3>Fleet Health Distribution</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={healthBuckets} cx="50%" cy="50%" innerRadius={50} outerRadius={78} paddingAngle={3} dataKey="value">
+                {healthBuckets.map((_, i) => <Cell key={i} fill={HEALTH_COLORS[i]} />)}
+              </Pie>
+              <Tooltip />
+              <Legend verticalAlign="bottom" height={36} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="dash-chart-card">
+          <h3>Inventory by Make</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={makeDistribution} layout="vertical" margin={{ left: 10, right: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis type="number" tick={{ fontSize: 12 }} />
+              <YAxis dataKey="make" type="category" width={80} tick={{ fontSize: 12 }} />
+              <Tooltip />
+              <Bar dataKey="count" fill="var(--green)" radius={[0, 6, 6, 0]} barSize={18} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
-      <div className="section cta">
-        <Link to="/work-queue" className="btn primary">
-          <BatteryCharging size={17} /> Work queue
+
+      <div className="dash-quick-grid">
+        <Link to="/vehicles" className="dash-quick-card">
+          <div className="dash-quick-icon" style={{ background: "var(--green-paper-light)" }}><Car size={20} color="var(--green-ink)" /></div>
+          <div><strong>Browse vehicles</strong><small>View health summaries for buyers</small></div>
+          <ChevronRight size={16} />
         </Link>
-        <Link to="/vehicles" className="btn secondary">
-          Inventory
+        <Link to="/reports" className="dash-quick-card">
+          <div className="dash-quick-icon" style={{ background: "#dbeafe" }}><FileText size={20} color="var(--blue)" /></div>
+          <div><strong>Published reports</strong><small>{publishedReports} report{publishedReports !== 1 ? "s" : ""} ready to share with buyers</small></div>
+          <ChevronRight size={16} />
         </Link>
       </div>
-      <section className="section">
-        <div className="page-head">
-          <span className="kicker">Inventory</span>
-          <span className="headline-sm">Vehicles in inventory</span>
+      {publishedReports > 0 && (
+        <section className="dash-table-section">
+          <div className="section-title">
+            <h2>Buyer-ready reports</h2>
+            <Badge tone="teal">{publishedReports} published</Badge>
+          </div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead>
+                <tr><th>Vehicle</th><th>Health</th><th>Status</th><th>Generated</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                {reports.filter((r) => r.status === "published").map((r) => (
+                  <tr key={r.id}>
+                    <td><strong>{r.payload.vehicle}</strong><br /><span className="body-small">v{r.payload.version} · VIN {r.payload.vin}</span></td>
+                    <td className="num">{r.payload.interval ? `${r.payload.interval[0]}–${r.payload.interval[1]}%` : "—"}</td>
+                    <td><Badge tone="teal">{r.status}</Badge></td>
+                    <td className="num">{date(r.payload.as_of)}</td>
+                    <td><Link to={"/reports/" + r.id + "/preview"} className="btn-minimal">View →</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+      <section className="dash-table-section">
+        <div className="section-title">
+          <h2>Vehicle inventory</h2>
+          <Badge>{items.length} vehicles</Badge>
         </div>
         <div className="table-wrap">
           <table className="tbl">
             <thead>
-              <tr>
-                <th>Vehicle</th>
-                <th>Pack</th>
-                <th>Estimated health</th>
-                <th className="num">Last reading</th>
-                <th>Action</th>
-              </tr>
+              <tr><th>Vehicle</th><th>Health</th><th className="num">Last reading</th><th>Action</th></tr>
             </thead>
             <tbody>
-              {items.map((v) => (
+              {items.slice(0, 10).map((v) => (
                 <tr key={v.id}>
-                  <td>
-                    <strong>
-                      {v.year} {v.make} {v.model}
-                    </strong>
-                    <br />
-                    <span className="body-small">
-                      {v.stock} · {v.miles.toLocaleString()} mi
-                    </span>
-                  </td>
-                  <td>
-                    <span className="prod-chip">{v.pack}</span>
-                  </td>
-                  <td className="num">
-                    {v.assessment.interval
-                      ? `${v.assessment.interval[0]}–${v.assessment.interval[1]}%`
-                      : "No evidence"}
-                  </td>
-                  <td className="num">
-                    {v.assessment.last ? date(v.assessment.last.date) : "—"}
-                  </td>
-                  <td>
-                    <Link to={"/vehicles/" + v.id} className="btn-minimal">
-                      Inspect →
-                    </Link>
-                  </td>
+                  <td><strong>{v.year} {v.make} {v.model}</strong><br /><span className="body-small">{v.stock} · {v.miles.toLocaleString()} mi</span></td>
+                  <td className="num">{v.assessment.interval ? `${v.assessment.interval[0]}–${v.assessment.interval[1]}%` : "—"}</td>
+                  <td className="num">{v.assessment.last ? date(v.assessment.last.date) : "—"}</td>
+                  <td><Link to={"/vehicles/" + v.id} className="btn-minimal">Open →</Link></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {items.length > 10 && (
+          <Link to="/vehicles" className="dash-table-more">View all {items.length} vehicles <ArrowRight size={14} /></Link>
+        )}
       </section>
     </div>
   );
@@ -728,7 +1128,10 @@ function App() {
       </Routes>
     );
   if (session.isPending) return <Loading />;
-  if (!session.data || sessionExpired)
+  if (!session.data || sessionExpired) {
+    // An expired staff session returns to sign-in with the unfinished capture preserved.
+    if (sessionExpired && loc.pathname !== "/login")
+      return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
     return (
       <Routes>
         <Route
@@ -743,29 +1146,41 @@ function App() {
         <Route path="*" element={<Landing sessionExpired={sessionExpired} />} />
       </Routes>
     );
+  }
+  const NAV = [
+    { p: "/work-queue", t: "Dashboard", Icon: BatteryCharging },
+    { p: "/vehicles", t: "Vehicles", Icon: Car },
+    { p: "/reports", t: "Reports", Icon: FileText },
+    { p: "/settings/sources", t: "Sources", Icon: Settings },
+  ];
   return (
-    <div className="shell">
-      <header className="hdr hdr-dark">
-        <Link className="wordmark" to="/work-queue">
-          <LogoMark size={30} />
-          <span>Battery Timeline</span>
+    <div className="ws">
+      <aside className="ws-side" aria-label="Main navigation">
+        <Link className="ws-brand" to="/work-queue">
+          <VoltVaultLogo size={28} />
+          <span>VoltVault</span>
         </Link>
-        <div className="hdr-right">
-          <span
-            style={{
-              fontSize: 13,
-              color: "#fff7e4",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <Leaf size={16} />
-            Northline Motors · {date(session.data.as_of)}
-          </span>
+        <nav className="ws-nav">
+          {NAV.map(({ p, t, Icon }) => {
+            const active =
+              loc.pathname === p || loc.pathname.startsWith(p + "/") ||
+              (p === "/work-queue" && (loc.pathname === "/" || loc.pathname.startsWith("/service/")));
+            return (
+              <Link key={p} className={"ws-nav-item" + (active ? " active" : "")} to={p} aria-current={active ? "page" : undefined}>
+                <Icon size={18} />
+                <span>{t}</span>
+              </Link>
+            );
+          })}
+        </nav>
+        <div className="ws-side-bottom">
+          <div className="ws-dealer">
+            <Leaf size={14} />
+            <span>Northline Motors</span>
+          </div>
+          <span className="ws-date">{date(session.data.as_of)}</span>
           <button
-            className="btn white-btn"
-            style={{ minHeight: 38, padding: "0 16px", fontSize: 13 }}
+            className="ws-logout"
             onClick={async () => {
               await api("/session/logout", {});
               qc.clear();
@@ -775,66 +1190,35 @@ function App() {
             Sign out
           </button>
         </div>
-      </header>
-      <nav className="nav-dock" aria-label="Main navigation">
-        {[
-          { p: "/work-queue", t: "Dashboard", Icon: BatteryCharging },
-          { p: "/vehicles", t: "Vehicles", Icon: Car },
-          { p: "/reports", t: "Reports", Icon: FileText },
-          { p: "/settings/sources", t: "Sources", Icon: Settings },
-        ].map(({ p, t, Icon }) => {
+      </aside>
+      <div className="ws-main">
+        <main>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/work-queue" element={<Dashboard />} />
+            <Route path="/vehicles" element={<Queue all />} />
+            <Route path="/vehicles/:id" element={<Detail />} />
+            <Route path="/service/:id/capture" element={<Capture />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/reports/:id/preview" element={<Preview />} />
+            <Route path="/settings/sources" element={<Sources />} />
+            <Route path="*" element={<Navigate to="/work-queue" replace />} />
+          </Routes>
+        </main>
+      </div>
+      <nav className="ws-mobile-nav" aria-label="Mobile navigation">
+        {NAV.map(({ p, t, Icon }) => {
           const active =
-            loc.pathname === p || (p === "/work-queue" && loc.pathname === "/");
+            loc.pathname === p || loc.pathname.startsWith(p + "/") ||
+            (p === "/work-queue" && (loc.pathname === "/" || loc.pathname.startsWith("/service/")));
           return (
-            <Link
-              key={p}
-              className={active ? "active" : ""}
-              to={p}
-              aria-current={active ? "page" : undefined}
-            >
-              <Icon size={16} />
-              {t}
+            <Link key={p} className={"ws-mob-item" + (active ? " active" : "")} to={p}>
+              <Icon size={18} />
+              <span>{t}</span>
             </Link>
           );
         })}
       </nav>
-      <main>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/work-queue" element={<Dashboard />} />
-          <Route path="/vehicles" element={<Queue all />} />
-          <Route path="/vehicles/:id" element={<Detail />} />
-          <Route path="/service/:id/capture" element={<Capture />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/reports/:id/preview" element={<Preview />} />
-          <Route path="/settings/sources" element={<Sources />} />
-          <Route path="*" element={<Navigate to="/work-queue" replace />} />
-        </Routes>
-      </main>
-      <footer className="footer">
-        <div className="footer-top">
-          <div className="footer-brand">
-            <LogoMark size={26} />
-            <span>Battery Timeline</span>
-          </div>
-          <p className="footer-tagline">
-            EV battery evidence, kept faithful from the service lane to the
-            buyer report. Production concept — synthetic inventory.
-          </p>
-        </div>
-        <div className="footer-bottom">
-          <span>
-            Portal · Northline Motors · Demo day {date(session.data.as_of)}
-          </span>
-          <Link
-            className="btn-minimal"
-            to="/work-queue"
-            style={{ fontSize: 12 }}
-          >
-            Work queue
-          </Link>
-        </div>
-      </footer>
     </div>
   );
 }
@@ -865,7 +1249,7 @@ function Queue({ all = false }: { all?: boolean }) {
       (!scenario || v.scenario === scenario),
   );
   return (
-    <>
+    <div className="page">
       <div className="eyebrow">WORK QUEUE</div>
       <div className="page-title">
         <div>
@@ -971,7 +1355,7 @@ function Queue({ all = false }: { all?: boolean }) {
         capacity relative to its reference capacity. It is different from charge
         level.
       </div>
-    </>
+    </div>
   );
 }
 function Chart({
@@ -1136,8 +1520,23 @@ function Detail() {
       setBusy(false);
     }
   }
+  async function startIntake() {
+    setBusy(true);
+    setError("");
+    try {
+      const visit = await api<{ id: string }>(
+        "/vehicles/" + id + "/intake-visit",
+        {},
+      );
+      nav("/service/" + visit.id + "/capture");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
-    <>
+    <div className="page">
       <Link className="back" to="/work-queue">
         <ArrowLeft size={15} /> Work queue
       </Link>
@@ -1164,21 +1563,48 @@ function Detail() {
             </button>
           </p>
         </div>
-        {role !== "sales" && (
-          <Link className="button primary" to={"/service/" + id + "/capture"}>
-            <Plus size={17} /> Add reading
-          </Link>
-        )}
+        {role !== "sales" &&
+          (v.evidence_state === "none" ? (
+            <button
+              className="button primary"
+              onClick={startIntake}
+              disabled={busy}
+            >
+              <Plus size={17} /> Add intake baseline
+            </button>
+          ) : (
+            <Link className="button primary" to={"/service/" + id + "/capture"}>
+              <Plus size={17} /> Add reading
+            </Link>
+          ))}
       </div>
+      {role !== "sales" && v.evidence_state === "none" && (
+        <div className="info">
+          No battery evidence yet. Start with an intake baseline test, then
+          capture a reading at each service visit so the buyer sees a history,
+          not a single number.
+        </div>
+      )}
+      {role !== "sales" && v.evidence_state === "baseline_only" && (
+        <div className="warning">
+          Acquisition baseline only — no dealer service history yet. The next
+          service reading starts the trend a buyer can actually verify.
+        </div>
+      )}
       <div className="detail-grid">
         <div>
           <section className="card summary">
             <div className="health-overview">
               <div className="summary-top">
                 <span>Estimated battery health</span>
-                <Badge tone={h.quality === "limited" ? "amber" : "teal"}>
-                  {h.quality} evidence
-                </Badge>
+                <div className="badge-row">
+                  {v.evidence_state === "baseline_only" && (
+                    <Badge tone="amber">Baseline only</Badge>
+                  )}
+                  <Badge tone={h.quality === "limited" ? "amber" : "teal"}>
+                    {h.quality} evidence
+                  </Badge>
+                </div>
               </div>
               <HealthGauge
                 interval={h.interval}
@@ -1201,6 +1627,22 @@ function Detail() {
               </div>
             </div>
             <div className="summary-context">
+              <div className="summary-facts">
+                <div>
+                  <small>INDEPENDENT DATES</small>
+                  <strong>
+                    {h.count} {h.count === 1 ? "reading" : "readings"}
+                  </strong>
+                </div>
+                <div>
+                  <small>OBSERVED TREND</small>
+                  <strong>
+                    {h.slope !== null
+                      ? `${h.slope} pts/yr`
+                      : "Needs more history"}
+                  </strong>
+                </div>
+              </div>
               <details>
                 <summary>Why this estimate?</summary>
                 <p>
@@ -1244,6 +1686,7 @@ function Detail() {
               )}
             </div>
           </section>
+          {v.life && <LifeBlock life={v.life} />}
           <div className="tabs">
             {(role === "sales"
               ? ["Timeline", "Warranty"]
@@ -1261,7 +1704,7 @@ function Detail() {
           {tab === "Timeline" ? (
             <section className="card">
               <div className="section-title">
-                <h2>Battery Timeline</h2>
+                <h2>Health Timeline</h2>
                 <Badge>{v.readings.length} recorded readings</Badge>
               </div>
               <p className="muted">
@@ -1281,6 +1724,15 @@ function Detail() {
                   <BatteryCharging />
                   <h2>Start this vehicle’s history</h2>
                   <p>A confirmed capacity reading is the first step.</p>
+                  {role !== "sales" && (
+                    <button
+                      className="button primary"
+                      onClick={startIntake}
+                      disabled={busy}
+                    >
+                      <Plus size={17} /> Add intake baseline
+                    </button>
+                  )}
                 </div>
               )}
               {v.events.map((e) => (
@@ -1301,6 +1753,9 @@ function Detail() {
                     <div>
                       <strong>
                         {r.value}% battery health <Badge>{r.pack} pack</Badge>
+                        {r.origin === "intake" && (
+                          <Badge tone="teal">Intake baseline</Badge>
+                        )}
                       </strong>
                       <p>
                         {r.source} · {date(r.date)} ·{" "}
@@ -1429,6 +1884,14 @@ function Detail() {
                   assumptions. Warranty does not add a premium.
                 </p>
                 <p>Base already includes battery: {v.included}.</p>
+                {v.life?.status === "projected" && v.life.thresholds[0] && (
+                  <p>
+                    Pack projection: the {v.life.thresholds[0].percent}% pricing
+                    reference is about {lifeRange(v.life.thresholds[0])} away at
+                    the observed rate. Remaining life informs the decision; it
+                    does not change the policy coefficients.
+                  </p>
+                )}
               </details>
               <ValuationEditor key={v.id + v.revision} v={v} api={api} />
               {h.quality === "limited" && (
@@ -1502,7 +1965,7 @@ function Detail() {
           </section>
         )}
       </div>
-    </>
+    </div>
   );
 }
 function Capture() {
@@ -1515,12 +1978,17 @@ function Capture() {
   const visit = useQuery({
     queryKey: ["visit", id],
     queryFn: () =>
-      api<{ id: string; vehicle: string; ro: string; state: string }>(
-        "/service-visits/" + id,
-      ),
+      api<{
+        id: string;
+        vehicle: string;
+        ro: string;
+        state: string;
+        kind?: string;
+      }>("/service-visits/" + id),
     enabled: role !== "sales",
   });
   const vehicleId = visit.data?.vehicle || id;
+  const isIntake = visit.data?.kind === "intake";
   const q = useQuery({
     queryKey: ["vehicle", vehicleId],
     queryFn: () => api<Vehicle>("/vehicles/" + vehicleId),
@@ -1634,10 +2102,17 @@ function Capture() {
         <ArrowLeft size={15} /> Vehicle workspace
       </Link>
       <div className="eyebrow">
-        SERVICE VISIT · {visit.data?.ro || "Loading visit…"}
+        {isIntake ? "ACQUISITION INTAKE" : "SERVICE VISIT"} ·{" "}
+        {visit.data?.ro || "Loading visit…"}
       </div>
-      <h1>Capture a battery reading</h1>
-      <p>Review the source. Confirm the reading. Build the history.</p>
+      <h1>
+        {isIntake ? "Record an intake baseline" : "Capture a battery reading"}
+      </h1>
+      <p>
+        {isIntake
+          ? "A baseline gives the Timeline a starting point. It is not dealer service history."
+          : "Review the source. Confirm the reading. Build the history."}
+      </p>
       {q.data && (
         <div className="capture-context">
           <Car />
@@ -1656,8 +2131,16 @@ function Capture() {
       {success ? (
         <div className="card empty" role="status">
           <Check size={36} />
-          <h2>Reading added to the Timeline</h2>
-          <p>The assessment has been recalculated and saved.</p>
+          <h2>
+            {isIntake
+              ? "Baseline added to the Timeline"
+              : "Reading added to the Timeline"}
+          </h2>
+          <p>
+            {isIntake
+              ? "The baseline is now the starting point for this vehicle's evidence."
+              : "The assessment has been recalculated and saved."}
+          </p>
           <button
             className="primary"
             onClick={() => nav("/vehicles/" + vehicleId)}
@@ -1966,7 +2449,11 @@ function Capture() {
               className="primary"
               disabled={busy || extracting || uploading}
             >
-              {busy ? "Saving and assessing…" : "Confirm and add to Timeline"}
+              {busy
+                ? "Saving and assessing…"
+                : isIntake
+                  ? "Confirm baseline"
+                  : "Confirm and add to Timeline"}
               <Check size={17} />
             </button>
           </div>
@@ -1981,7 +2468,7 @@ function Reports() {
     queryFn: () => api<Report[]>("/reports"),
   });
   return (
-    <>
+    <div className="page">
       <div className="eyebrow">BUYER HANDOFF</div>
       <h1>Battery reports</h1>
       <p>
@@ -2037,7 +2524,7 @@ function Reports() {
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 function ReportBody({ p, token }: { p: Payload; token?: string }) {
@@ -2045,7 +2532,7 @@ function ReportBody({ p, token }: { p: Payload; token?: string }) {
     <article className="report-paper">
       <div className="report-brand">
         <BatteryCharging />
-        <strong>BATTERY TIMELINE</strong>
+        <strong>VOLTVAULT</strong>
         <Badge>Dealer-issued evidence summary</Badge>
       </div>
       <h1>Battery Health Report</h1>
@@ -2070,6 +2557,13 @@ function ReportBody({ p, token }: { p: Payload; token?: string }) {
             : "No confirmed readings"}
         </p>
       </div>
+      {p.life && <LifeBlock life={p.life} variant="buyer" />}
+      {p.evidence_basis?.state === "baseline_only" && (
+        <div className="warning">
+          Acquisition baseline only. No dealer service history is recorded yet,
+          and a single test cannot show a trend.
+        </div>
+      )}
       <h2>Current-pack history</h2>
       <p>
         Pack: {p.pack}. Earlier pack readings are excluded from this estimate.
@@ -2165,7 +2659,7 @@ function Preview() {
       </div>
     );
   return (
-    <>
+    <div className="page">
       <Link to="/reports" className="back">
         <ArrowLeft size={15} /> Reports
       </Link>
@@ -2206,7 +2700,7 @@ function Preview() {
         p={r.payload}
         token={r.status === "published" ? r.token : undefined}
       />
-    </>
+    </div>
   );
 }
 function PublicReport() {
@@ -2234,7 +2728,7 @@ function PublicReport() {
 function Sources() {
   const q = useQuery({ queryKey: ["sources"], queryFn: () => api("/sources") });
   return (
-    <>
+    <div className="page">
       <div className="eyebrow">GOVERNANCE</div>
       <h1>Sources & settings</h1>
       <p>Know where the evidence comes from, and where its limits are.</p>
@@ -2268,7 +2762,7 @@ function Sources() {
           />
         )}
       </div>
-    </>
+    </div>
   );
 }
 const PIPELINE = [
@@ -2399,475 +2893,322 @@ function Sparkline() {
     </svg>
   );
 }
-function LandingHeader({ onSignIn }: { onSignIn: () => void }) {
+function HeroBattery() {
+  const bars = [92, 88, 85, 79, 74];
   return (
-    <header className="lp-header">
-      <div className="lp-wrap lp-nav">
-        <div className="lp-brand">
-          <span className="logo">
-            <BatteryCharging size={20} />
-          </span>
-          <span>Battery Timeline</span>
-        </div>
-        <nav className="lp-links" aria-label="Sections">
-          <a href="#how">How it works</a>
-          <a href="#features">Why it's different</a>
-          <a href="#roles">Roles</a>
-        </nav>
-        <button className="primary" onClick={onSignIn}>
-          Launch demo <ArrowRight size={16} />
-        </button>
-      </div>
-    </header>
+    <svg className="hero-batt" viewBox="0 0 200 120" fill="none" aria-hidden="true">
+      <rect x="10" y="20" width="160" height="90" rx="14" stroke="#2be3a1" strokeWidth="2.5" opacity="0.4" />
+      <rect x="170" y="45" width="12" height="30" rx="4" fill="#2be3a1" opacity="0.3" />
+      {bars.map((h, i) => (
+        <rect key={i} x={24 + i * 28} y={94 - h * 0.7} width={18} height={h * 0.7} rx={4}
+          fill={`rgba(43,227,161,${0.3 + i * 0.15})`}
+          className="hero-bar" style={{ animationDelay: `${i * 0.12}s` }} />
+      ))}
+      <path d="M24 90 L150 90" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
+    </svg>
+  );
+}
+function SDGWheel({ size = 80 }: { size?: number }) {
+  const goals = [
+    { n: 7, c: "#FCC30B", l: "Affordable Energy" },
+    { n: 9, c: "#F36D25", l: "Industry & Innovation" },
+    { n: 11, c: "#F99D26", l: "Sustainable Cities" },
+    { n: 12, c: "#CF8D2A", l: "Responsible Consumption" },
+    { n: 13, c: "#48773E", l: "Climate Action" },
+  ];
+  const r = size / 2 - 4;
+  const cx = size / 2, cy = size / 2;
+  const slice = (2 * Math.PI) / goals.length;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="sdg-wheel" aria-label="UN SDG alignment">
+      {goals.map((g, i) => {
+        const a1 = i * slice - Math.PI / 2;
+        const a2 = (i + 1) * slice - Math.PI / 2;
+        const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+        const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
+        return (
+          <path key={g.n}
+            d={`M${cx},${cy} L${x1},${y1} A${r},${r} 0 0,1 ${x2},${y2} Z`}
+            fill={g.c} opacity="0.85" />
+        );
+      })}
+      <circle cx={cx} cy={cy} r={r * 0.45} fill="var(--forest)" />
+      <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle"
+        fill="#fff" fontSize="10" fontWeight="700" fontFamily="var(--font-mono)">SDG</text>
+    </svg>
+  );
+}
+function VoltVaultLogo({ size = 32 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-label="VoltVault logo">
+      <defs>
+        <linearGradient id="vv-bg" x1="0" y1="0" x2="48" y2="48">
+          <stop stopColor="#0d9488" />
+          <stop offset="1" stopColor="#16a34a" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="12" fill="url(#vv-bg)" />
+      <path d="M14 14 L24 34 L34 14" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M20 14 L24 22 L28 14" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.5" />
+      <path d="M22 28 l2-4h2l-1.5 2.5h2l-4 5.5 .8-2.5h-2z" fill="#FCC30B" />
+    </svg>
   );
 }
 function Landing({ sessionExpired }: { sessionExpired?: boolean }) {
   const nav = useNavigate();
   const go = () => nav("/login");
-  const themePoints = [
-    {
-      id: "green",
-      icon: GreenServer,
-      title: "EV Readiness Advisor",
-      desc: "Scores a dealership's availability, charging, technician and parts supply for EV sales.",
-    },
-    {
-      id: "paper",
-      icon: PaperNote,
-      title: "Paperless Deal Jacket",
-      desc: "E-contract adoption, savings from going paperless, and a leaderboard of incentives.",
-    },
-    {
-      id: "carbon",
-      icon: CarbonFlag,
-      title: "Carbon Tracker",
-      desc: "Visualizes emissions from facilities, loans and logistics with reduction recommendations.",
-    },
-    {
-      id: "tradein",
-      icon: BatteryFlash,
-      title: "Trade-In Battery Estimator",
-      desc: "Turns diagnostic + service history into a fairer, explainable trade-in battery estimate.",
-    },
-    {
-      id: "delivery",
-      icon: RouteIcon,
-      title: "Green Delivery Optimizer",
-      desc: "Optimizes routes for EV shuttles and delivery vehicles to cut emissions and fuel cost.",
-    },
-    {
-      id: "parts",
-      icon: PartsIcon,
-      title: "Circular Parts Marketplace",
-      desc: "Matches reconditioned or recyclable parts across the dealer network to cut repair costs.",
-    },
+  const STEPS = [
+    { num: "01", icon: Camera, title: "Capture", desc: "Record battery health at every visit" },
+    { num: "02", icon: TrendingUp, title: "Timeline", desc: "Build a sourced, auditable history" },
+    { num: "03", icon: Gauge, title: "Appraise", desc: "Turn evidence into a fair offer" },
+    { num: "04", icon: QrCode, title: "Report", desc: "Hand the buyer verifiable proof" },
+  ];
+  const THEME = [
+    { icon: GreenServer, title: "EV Readiness Advisor", desc: "Score a dealership's readiness for EV sales and service", ours: false },
+    { icon: CarbonFlag, title: "Carbon Footprint Tracker", desc: "Track and visualize emissions from dealership operations", ours: false },
+    { icon: PartsIcon, title: "Circular Parts Marketplace", desc: "Match recyclable or reconditioned parts across a dealer network", ours: false },
+    { icon: PaperNote, title: "Paperless Deal Jacket", desc: "Quantify paper savings from e-contracting adoption", ours: false },
+    { icon: BatteryFlash, title: "EV Trade-In Battery Estimator", desc: "Estimate battery health and remaining life for fair trade-in pricing", ours: true },
+    { icon: RouteIcon, title: "Green Delivery Optimizer", desc: "Optimize routing for loaner and delivery vehicles", ours: false },
+  ];
+  const SDGS = [
+    { n: 7, title: "Affordable & Clean Energy", color: "#FCC30B", desc: "Supporting EV adoption through transparent battery health data" },
+    { n: 9, title: "Industry, Innovation & Infrastructure", color: "#F36D25", desc: "Deterministic assessment engine for automotive retail" },
+    { n: 11, title: "Sustainable Cities & Communities", color: "#F99D26", desc: "Extending EV battery life reduces urban waste" },
+    { n: 12, title: "Responsible Consumption & Production", color: "#CF8D2A", desc: "Evidence-based decisions reduce premature battery disposal" },
+    { n: 13, title: "Climate Action", color: "#48773E", desc: "Keeping used EVs on the road lowers carbon footprint" },
   ];
   return (
-    <div className="landing-page">
-      <header className="hdr landing-nav">
-        <Link className="wordmark" to="/">
-          <LogoMark size={28} />
-          <span>Battery Timeline</span>
-        </Link>
-        <nav className="lp-links" aria-label="Sections">
-          <a href="#how">How it works</a>
-          <a href="#green">Green tech</a>
-          <a href="#sdg">SDGs</a>
-          <a href="#paper">Paperless</a>
-          <a href="#theme">Theme coverage</a>
-        </nav>
-        <button className="btn primary" onClick={go}>
-          Open demo <ArrowRight size={16} />
-        </button>
+    <div className="lp">
+      <header className="lp-nav">
+        <div className="lp-nav-inner">
+          <Link className="lp-brand" to="/">
+            <VoltVaultLogo size={30} /> <span>VoltVault</span>
+          </Link>
+          <nav className="lp-nav-links">
+            <a href="#how">How it works</a>
+            <a href="#theme">Theme</a>
+            <a href="#sdgs">SDGs</a>
+            <a href="#roles">Roles</a>
+            <a href="#insights">Insights</a>
+          </nav>
+          <button className="btn primary" onClick={go}>
+            Launch demo <ArrowRight size={15} />
+          </button>
+        </div>
       </header>
+
       {sessionExpired && (
-        <div
-          className="page-head"
-          style={{
-            background: "var(--red-light)",
-            color: "var(--red)",
-            textAlign: "center",
-            padding: "10px 16px",
-          }}
-        >
-          Your demo session expired — sign back in to continue.
+        <div className="lp-alert" role="status">
+          Session expired — sign back in to continue.
         </div>
       )}
-      {/* ---- Hero: forest, muted, big type ---- */}
-      <section id="hero" className="hero-green">
-        <div className="page-head">
-          <span className="kicker">
-            EV battery evidence — green readiness for dealers
-          </span>
-        </div>
-        <h1
-          style={{
-            color: "#fff",
-            fontSize: "clamp(52px, 9vw, 86px)",
-            letterSpacing: "-2px",
-            lineHeight: 1.03,
-          }}
-        >
-          From the service lane, <br />
-          to the <span style={{ color: "#2be3a1", fontWeight: 700 }}>
-            sold
-          </span>{" "}
-          — visibly.
-        </h1>
-        <p
-          style={{
-            color: "#fff7e4",
-            fontSize: 19,
-            lineHeight: 1.7,
-            maxWidth: 620,
-            marginTop: 24,
-          }}
-        >
-          Battery Timeline makes dealer readiness visible: every battery readout
-          is sourced, every decision audited, and every buyer report carries the
-          same truthful evidence — nothing typed twice.
-        </p>
-        <div className="cta">
-          <button className="btn primary" onClick={go}>
-            <BatteryCharging size={18} /> Open the live demo
-            <ArrowRight size={16} />
-          </button>
-          <button
-            className="btn white-btn"
-            onClick={() =>
-              document
-                .getElementById("how")
-                ?.scrollIntoView({ behavior: "smooth" })
-            }
-          >
-            See how it works
-          </button>
-        </div>
-        <div
-          style={{ display: "flex", justifyContent: "center", marginTop: 40 }}
-        >
-          <Teedle size={64} />
-        </div>
-      </section>
 
-      {/* ---- How it works: crisp, production ---- */}
-      <section id="how" className="section">
-        <div className="page-head">
-          <span className="kicker">The handoff</span>
-          <span className="headline-sm">
-            One record. Four steps. No re-typing.
-          </span>
-          <p className="body-muted" style={{ maxWidth: 640 }}>
-            The same vehicle record is written by the service lane and read by
-            the appraisal desk.
-          </p>
-        </div>
-        <div className="bento" aria-label="Workflow steps">
-          {[
-            {
-              icon: Camera,
-              title: "Capture at the lane",
-              body: "One reading, typed or photo-reviewed, confirmed once.",
-            },
-            {
-              icon: TrendingUp,
-              title: "Timeline history",
-              body: "Every reading becomes a dated, sourced observation.",
-            },
-            {
-              icon: Gauge,
-              title: "Turn evidence into an offer",
-              body: "Transparent price breakdown, saved as an immutable decision.",
-            },
-            {
-              icon: QrCode,
-              title: "Hand the buyer the proof",
-              body: "Privacy-safe report with masked VIN, QR, and PDF.",
-            },
-          ].map((s) => (
-            <div className="card" key={s.title} style={{ flex: 1 }}>
-              <span className="badge green" style={{ marginBottom: 12 }}>
-                {React.createElement(s.icon, { size: 20 })} {s.title}
-              </span>
-              <p
-                className="body-muted"
-                style={{ fontSize: 14, lineHeight: 1.6 }}
-              >
-                {s.body}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ---- Green tech section: motion + green ---- */}
-      <section id="green" className="section green-panel">
-        <div className="page-head">
-          <span className="kicker" style={{ color: "var(--green-ink)" }}>
-            EV Readiness Advisor
-          </span>
-          <span className="headline-sm" style={{ color: "var(--green-ink)" }}>
-            Green tech that scores itself.
-          </span>
-        </div>
-        <div className="grid grid-2" style={{ marginTop: 48 }}>
-          <div>
-            <p className="body-muted">
-              A dealership’s EV readiness, in one number: availability, charging
-              capability, technician supply and parts availability.
+      {/* ---- Hero: image-driven ---- */}
+      <section className="lp-hero">
+        <div className="lp-hero-split">
+          <div className="lp-hero-content">
+            <span className="kicker">VoltVault by Tekion</span>
+            <h1 className="lp-h1">
+              Know your EV battery.<br />
+              <span className="lp-accent">Trust the proof.</span>
+            </h1>
+            <p className="lp-hero-sub">
+              From service lane to buyer report — every reading sourced, every decision auditable.
             </p>
-            <div className="cta">
-              <button className="btn white-btn">
-                Learn the readiness score
+            <div className="lp-hero-cta">
+              <button className="btn primary lg" onClick={go}>
+                <BatteryCharging size={19} /> Try the live demo
+              </button>
+              <button className="btn outline lg" onClick={() => document.getElementById("how")?.scrollIntoView({ behavior: "smooth" })}>
+                See how it works
               </button>
             </div>
           </div>
-          <GreenServer />
-        </div>
-      </section>
-
-      {/* ---- SDG 4: Quality Education — visual centerpiece ---- */}
-      <section
-        id="sdg"
-        className="section"
-        style={{
-          background:
-            "linear-gradient(140deg, #0c1f1a 0%, #13532c 45%, #23d399 100%)",
-          color: "#fff",
-        }}
-      >
-        <div className="page-head">
-          <span className="kicker" style={{ color: "#fff" }}>
-            SDG 4 · Quality Education
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 40,
-            flexWrap: "wrap",
-            justifyContent: "center",
-            marginTop: 24,
-          }}
-        >
-          <Sun size={92} />
-          <span
-            className="display-light"
-            style={{
-              color: "#fff",
-              fontSize: 74,
-              fontWeight: 700,
-              lineHeight: 1,
-            }}
-          >
-            4
-          </span>
-        </div>
-        <h2
-          style={{
-            color: "#fff",
-            fontSize: 34,
-            margin: "12px auto 0",
-            maxWidth: 620,
-            textAlign: "center",
-            lineHeight: 1.25,
-          }}
-        >
-          Ahead-of-the-curve training for EV technicians and managers.
-        </h2>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-            gap: "var(--s3)",
-            maxWidth: 900,
-            margin: "var(--s5) auto 0",
-            textAlign: "center",
-          }}
-        >
-          {[
-            {
-              icon: BatteryFlash,
-              title: "Certification upgrades",
-              body: "Deliver technician certification upgrades in new EVs so the network adds skilled talent.",
-            },
-            {
-              icon: Car,
-              title: "Transition all staff",
-              body: "Support every technician on EV platforms, from senior service staff to new hires.",
-            },
-            {
-              icon: RouteIcon,
-              title: "Pipeline to sold vehicles",
-              body: "Build the pipeline that puts more EVs on the road — every certified technician, every EV sold.",
-            },
-          ].map((s) => (
-            <div
-              key={s.title}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                padding: "24px",
-                background: "rgba(255,255,255,0.06)",
-                border: "1px solid rgba(255,255,255,0.12)",
-                borderRadius: 12,
-              }}
-            >
-              {React.createElement(s.icon as typeof Car, {
-                size: 26,
-                color: "#2be3a1",
-              })}
-              <h3 style={{ color: "#fff", fontSize: 18, margin: 0 }}>
-                {s.title}
-              </h3>
-              <p
-                style={{
-                  color: "#fff7e4",
-                  fontSize: 13.5,
-                  lineHeight: 1.6,
-                  margin: 0,
-                }}
-              >
-                {s.body}
-              </p>
-            </div>
-          ))}
-        </div>
-        <div
-          className="sdg-strip"
-          style={{ marginTop: "var(--s4)", justifyContent: "center" }}
-          aria-label="SDG 1 through 17 indicator strip"
-        >
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].map(
-            (n) => (
-              <div className="sdg-item" key={n} aria-label={`SDG ${n}`}>
-                <SdgCircle tone={n === 4 ? "green" : "forest"} size={44} />
-                <div className="sdg-num">{n}</div>
-              </div>
-            ),
-          )}
-        </div>
-      </section>
-
-      {/* ---- Paperless section: motion paper ---- */}
-      <section id="paper" className="section paper">
-        <div className="page-head">
-          <span className="kicker">
-            Paperless Deal Jacket — from paper to pixels
-          </span>
-          <span className="headline-sm">Real savings, real impact.</span>
-        </div>
-        <div
-          className="paper-stack"
-          style={{ marginTop: 40, justifyContent: "flex-end" }}
-        >
-          <PaperStack size={52} />
-          <div className="grid grid-2">
-            <div>
-              <p className="body-muted" style={{ color: "#4a433a" }}>
-                When dealerships adopt e-contracts, every paper savings and
-                checkmark compounds into dealer leadership — with incentives to
-                drive adoption.
-              </p>
-            </div>
+          <div className="lp-hero-img">
+            <img src="/img/ev-charging.png" alt="Electric vehicle charging at a green station" />
           </div>
         </div>
       </section>
 
-      {/* ---- Theme coverage section ---- */}
-      <section id="theme" className="section">
-        <div className="page-head">
-          <span className="kicker">Theme coverage</span>
-          <span className="headline-sm">
-            Green tech, paperless, and EV readiness, covered.
-          </span>
-          <p className="body-muted" style={{ maxWidth: 640 }}>
-            A production design, purpose-built for dealer sustainability and
-            readiness.
+      {/* ---- Image strip ---- */}
+      <section className="lp-img-strip">
+        <div className="lp-img-strip-inner">
+          <img src="/img/ev-green-car.png" alt="Electric vehicle made of green leaves" />
+          <img src="/img/ev-solar-station.png" alt="EVs at a solar-powered charging station" />
+          <img src="/img/green-innovation.png" alt="Green technology and sustainability innovation" />
+        </div>
+      </section>
+
+      {/* ---- How it works: visual pipeline ---- */}
+      <section id="how" className="lp-section">
+        <div className="lp-section-head">
+          <h2 className="lp-h2">Four steps. Zero guesswork.</h2>
+        </div>
+        <div className="lp-pipeline">
+          {STEPS.map((s, i) => (
+            <React.Fragment key={s.num}>
+              {i > 0 && <div className="lp-pipe-arrow"><ChevronRight size={22} /></div>}
+              <div className="lp-pipe-step">
+                <div className="lp-pipe-icon">{React.createElement(s.icon, { size: 24 })}</div>
+                <strong>{s.title}</strong>
+                <span>{s.desc}</span>
+              </div>
+            </React.Fragment>
+          ))}
+        </div>
+      </section>
+
+      {/* ---- Theme: visual grid with real images ---- */}
+      <section id="theme" className="lp-section lp-section-dark">
+        <div className="lp-theme-row">
+          <div className="lp-theme-left">
+            <span className="kicker" style={{ color: "var(--green-mint)" }}>Theme 4 · Sustainability</span>
+            <h2 className="lp-h2" style={{ color: "#fff" }}>Green Tech for Automotive Retail</h2>
+            <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 16, lineHeight: 1.6, marginTop: 8 }}>
+              Six problem statements. VoltVault is the live prototype for <strong style={{ color: "#2be3a1" }}>EV Trade-In Battery Estimator</strong> — and touches every theme.
+            </p>
+            <img src="/img/ev-wireframe.png" alt="Digital wireframe of an electric vehicle" className="lp-theme-img" />
+          </div>
+          <div className="lp-theme-cards">
+            {THEME.map((t) => (
+              <div className="lp-theme-chip" key={t.title}>
+                <span className="lp-theme-chip-icon">{React.createElement(t.icon as typeof Camera, { size: 18 })}</span>
+                <div className="lp-theme-chip-text">
+                  <span>{t.title}</span>
+                  <small>{t.desc}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ---- SDG Goals section ---- */}
+      <section id="sdgs" className="lp-section lp-section-cream">
+        <div className="lp-section-head">
+          <span className="kicker">United Nations Sustainable Development Goals</span>
+          <h2 className="lp-h2">Aligned with 5 SDGs</h2>
+          <p style={{ maxWidth: 560, margin: "0 auto", color: "var(--muted)", fontSize: 16, lineHeight: 1.6 }}>
+            VoltVault directly contributes to these global sustainability targets by keeping EV batteries in service longer and making trade-in decisions evidence-based.
           </p>
         </div>
-        <div className="theme-grid" style={{ marginTop: 40 }}>
-          {themePoints.map((t) => (
-            <div className={t.id} key={t.id}>
-              <div className="theme-icon" style={{ height: 40 }}>
-                {React.createElement(t.icon as typeof Car, {
-                  size: 22,
-                  color:
-                    t.id === "green"
-                      ? "#fff"
-                      : t.id === "paper"
-                        ? "#4a433a"
-                        : "var(--green-ink)",
-                })}
-              </div>
-              <h3 className="theme-title">{t.title}</h3>
-              <p className="theme-desc">{t.desc}</p>
-            </div>
+        <div className="lp-sdg-row">
+          {[7, 9, 11, 12, 13].map((n) => (
+            <img key={n} src={`/img/sdg-${n}.png`} alt={`UN SDG ${n}`} className="lp-sdg-img" />
           ))}
         </div>
       </section>
 
-      {/* ---- Footer ---- */}
-      <div className="cta">
-        <button className="btn primary" onClick={go} style={{ width: "auto" }}>
-          Open the demo <ArrowRight size={18} />
-        </button>
-        <div
-          className="footer-green"
-          style={{
-            width: "100%",
-            marginTop: 64,
-            borderTop: "1px solid rgba(255,255,255,0.1)",
-            paddingTop: 32,
-          }}
-        >
-          <div className="footer-grid">
-            <div>
-              <div className="footer-brand-wrap">
-                <LogoMark size={28} />
-                <span>Battery Timeline</span>
-              </div>
-              <p>
-                Production concept · EV battery evidence, green tech, and
-                paperless dealer readiness. Synthetic inventory.
-              </p>
+      {/* ---- Impact numbers with visual ---- */}
+      <section className="lp-section">
+        <div className="lp-impact-hero">
+          <img src="/img/ev-solar-station.png" alt="EVs at solar charging station" className="lp-impact-img" />
+          <div className="lp-impact-content">
+            <h2 className="lp-h2">Built for trust, not guesswork.</h2>
+            <div className="lp-impact">
+              {[
+                { num: "0", label: "Re-typed values", sub: "Every reading flows from source" },
+                { num: "100%", label: "Auditable decisions", sub: "Immutable evidence snapshots" },
+                { num: "3", label: "Role-based views", sub: "Manager · Technician · Sales" },
+                { num: "< 2 min", label: "Capture to appraisal", sub: "Photo OCR or manual entry" },
+              ].map((s) => (
+                <div className="lp-impact-tile" key={s.label}>
+                  <strong>{s.num}</strong>
+                  <span>{s.label}</span>
+                  <small>{s.sub}</small>
+                </div>
+              ))}
             </div>
-            <div>
-              <h4>How it works</h4>
-              <a href="#how">Workflow steps</a>
-              <a href="#green">Green tech</a>
-              <a href="#sdg">SDGs</a>
-              <a href="#paper">Paperless</a>
-              <a href="#theme">Theme coverage</a>
-            </div>
-            <div>
-              <h4>Follow</h4>
-              <p>A Teedle-built portal, from the service lane to the sold.</p>
-              <a href="/r/token" target="_blank">
-                Buyer report
-              </a>
-            </div>
-          </div>
-          <div className="footer-row">
-            <span>
-              Battery Timeline · Independent Tek-Qubit concept · Northline
-              Motors — Chicago, Illinois
-            </span>
-            <a
-              href="#how"
-              onClick={() =>
-                document
-                  .getElementById("how")
-                  ?.scrollIntoView({ behavior: "smooth" })
-              }
-            >
-              Get started
-            </a>
           </div>
         </div>
-      </div>
+      </section>
+
+      {/* ---- Roles ---- */}
+      <section id="roles" className="lp-section lp-section-cream">
+        <div className="lp-section-head">
+          <h2 className="lp-h2">Three roles. One workflow.</h2>
+          <p style={{ maxWidth: 480, margin: "0 auto", color: "var(--muted)", fontSize: 16, lineHeight: 1.6 }}>
+            Each role sees exactly what they need — no more, no less.
+          </p>
+        </div>
+        <div className="lp-roles">
+          {ROLES.map((r) => (
+            <button className="lp-role" key={r.role} onClick={go}>
+              <div className="lp-role-icon">{React.createElement(r.icon, { size: 22 })}</div>
+              <h3>{r.title}</h3>
+              <ul className="lp-role-can">
+                {r.can.map((c) => <li key={c}><Check size={13} /> {c}</li>)}
+              </ul>
+              <span className="lp-role-go">Try it <ArrowRight size={14} /></span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* ---- Green Insights / News ---- */}
+      <section id="insights" className="lp-section">
+        <div className="lp-section-head">
+          <span className="kicker">Green Insights</span>
+          <h2 className="lp-h2">Latest in EV Sustainability</h2>
+          <p style={{ maxWidth: 520, margin: "0 auto", color: "var(--muted)", fontSize: 16, lineHeight: 1.6 }}>
+            Stay informed with the latest developments in EV battery technology, sustainability initiatives, and green automotive innovation.
+          </p>
+        </div>
+        <div className="lp-news-grid">
+          {[
+            {
+              img: "/img/ev-charging.png",
+              tag: "Battery Technology",
+              title: "EV Battery Lifespan: How Long Do They Really Last?",
+              desc: "Modern EV batteries are designed to last 15–20 years, but real-world conditions vary. Transparent health data is key to extending usable life.",
+              url: "https://www.energy.gov/eere/vehicles/articles/fotw-1272-january-9-2023-electric-vehicle-battery-pack-costs-2022-are",
+            },
+            {
+              img: "/img/ev-solar-station.png",
+              tag: "Renewable Energy",
+              title: "Solar-Powered Charging: The Future of EV Infrastructure",
+              desc: "Dealerships adopting solar charging stations reduce grid dependency and demonstrate commitment to UN SDG 7: Affordable & Clean Energy.",
+              url: "https://www.iea.org/reports/global-ev-outlook-2024",
+            },
+            {
+              img: "/img/green-innovation.png",
+              tag: "Circular Economy",
+              title: "Second-Life Batteries: From Cars to Grid Storage",
+              desc: "Used EV batteries retain 70–80% capacity — enough for stationary energy storage, reducing e-waste and supporting SDG 12.",
+              url: "https://www.weforum.org/stories/2024/02/how-second-life-ev-batteries-could-transform-the-energy-sector/",
+            },
+          ].map((article) => (
+            <a key={article.title} href={article.url} target="_blank" rel="noopener noreferrer" className="lp-news-card">
+              <img src={article.img} alt="" className="lp-news-img" />
+              <div className="lp-news-body">
+                <span className="lp-news-tag">{article.tag}</span>
+                <h3>{article.title}</h3>
+                <p>{article.desc}</p>
+                <span className="lp-news-link">Read more <ArrowRight size={14} /></span>
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      {/* ---- CTA ---- */}
+      <section className="lp-section lp-section-dark lp-cta-section">
+        <Teedle size={56} />
+        <h2 className="lp-h2" style={{ color: "#fff" }}>Ready to see it in action?</h2>
+        <button className="btn primary" onClick={go}>
+          Open the demo <ArrowRight size={16} />
+        </button>
+      </section>
+
+      <footer className="lp-footer">
+        <div className="lp-footer-inner">
+          <div className="lp-footer-brand">
+            <LogoMark size={20} /> <span>VoltVault</span>
+          </div>
+          <p>Tek-Qubit Hackathon · Northline Motors · Synthetic inventory</p>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -2879,7 +3220,8 @@ function Login({
   sessionExpired?: boolean;
   onSignedIn: () => void;
 }) {
-  const nav = useNavigate();
+  const loc = useLocation();
+  const from = (loc.state as { from?: string } | null)?.from;
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   async function pick(role: string) {
@@ -2887,14 +3229,9 @@ function Login({
     setError("");
     try {
       await api("/session", { role });
-      await qc.cancelQueries();
       qc.clear();
-      await qc.fetchQuery({
-        queryKey: ["session"],
-        queryFn: () => api("/session"),
-      });
       onSignedIn();
-      nav("/work-queue", { replace: true });
+      window.location.assign(from || "/work-queue");
     } catch (e) {
       setError(String(e));
       setBusy("");
@@ -2902,104 +3239,42 @@ function Login({
   }
   return (
     <div className="login-page">
-      <div className="hero">
-        <div className="page-head">
-          <span className="kicker">Northline Motors</span>
-          <span
-            className="display-light"
-            style={{
-              color: "#fff",
-              fontSize: 34,
-              fontWeight: 700,
-              lineHeight: 1.1,
-            }}
-          >
-            Enter the EV
-            <br /> sales studio.
-          </span>
-        </div>
-        <p
-          className="body-large"
-          style={{ color: "#fff7e4", marginTop: "var(--s4)" }}
-        >
-          Choose your role to step into the workflow: capture battery evidence,
-          review appraisals, and hand buyers trustworthy reports.
-        </p>
-        <div
-          style={{
-            display: "flex",
-            gap: 12,
-            flexWrap: "wrap",
-            justifyContent: "center",
-            marginTop: "var(--s5)",
-          }}
-        >
-          <Link className="btn outline" to="/">
-            Back to home
+      <div className="login-left">
+        <div className="login-left-content">
+          <VoltVaultLogo size={44} />
+          <h1 className="login-headline">VoltVault</h1>
+          <p className="login-lead">EV battery evidence workspace</p>
+          <HeroBattery />
+          <Link className="btn outline" to="/" style={{ alignSelf: "flex-start", marginTop: 16 }}>
+            <ArrowLeft size={15} /> Home
           </Link>
         </div>
       </div>
-      <div className="login-panel">
-        <h1 style={{ fontSize: 28, letterSpacing: -0.6, fontWeight: 700 }}>
-          Choose your role
-        </h1>
-        <p
-          style={{
-            color: "#5b665e",
-            fontSize: 14,
-            marginTop: 8,
-            marginBottom: "var(--s5)",
-          }}
-        >
-          Access is validated on the server. Switch any time by signing out.
-        </p>
-        {sessionExpired && (
-          <div
-            style={{
-              background: "var(--red-light)",
-              color: "var(--red)",
-              borderRadius: 10,
-              padding: "10px 14px",
-              marginBottom: "var(--s4)",
-            }}
-          >
-            Your session expired. Sign in again — your unfinished capture is
-            saved on this browser.
+      <div className="login-right">
+        <div className="login-card">
+          <h2 className="login-card-title">Select your role</h2>
+          {sessionExpired && (
+            <div className="error" role="status" style={{ marginBottom: 12 }}>
+              Session expired — your draft is saved locally.
+            </div>
+          )}
+          <div className="login-roles">
+            {ROLES.map((r) => (
+              <button key={r.role} className="login-role-btn" disabled={!!busy} onClick={() => pick(r.role)}>
+                <div className="login-role-icon">
+                  {React.createElement(r.icon, { size: 20 })}
+                </div>
+                <div className="login-role-info">
+                  <strong>{r.title}</strong>
+                </div>
+                <div className="login-role-arrow">
+                  {busy === r.role ? "Opening…" : <ArrowRight size={16} />}
+                </div>
+              </button>
+            ))}
           </div>
-        )}
-        <div className="grid grid-2">
-          {ROLES.map((r) => (
-            <button
-              key={r.role}
-              className="login-panel-role"
-              disabled={!!busy}
-              onClick={() => pick(r.role)}
-            >
-              {React.createElement(r.icon as typeof Car, {
-                size: 22,
-                color: "var(--green-ink)",
-              })}
-              <div className="copy">
-                <div className="role-title">{r.title}</div>
-                <div className="role-desc">{r.blurb}</div>
-              </div>
-              <span
-                style={{
-                  fontWeight: 700,
-                  fontSize: 13,
-                  color: "var(--forest-dark)",
-                  flexShrink: 0,
-                }}
-              >
-                {busy === r.role ? "Opening…" : <ArrowRight size={18} />}
-              </span>
-            </button>
-          ))}
+          <ErrorBox error={error} />
         </div>
-        <ErrorBox error={error} />
-      </div>
-      <div className="login-page-footer">
-        Battery Timeline · EV battery evidence · Synthetic inventory
       </div>
     </div>
   );

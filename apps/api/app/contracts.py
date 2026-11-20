@@ -53,6 +53,7 @@ class PublicReport(BaseModel):
     quality: str
     reason: str
     warnings: list[str]
+    life: dict | None = None
     readings: list[PublicReading]
     pack: str
     pack_context: dict | None = None
@@ -62,6 +63,7 @@ class PublicReport(BaseModel):
     as_of: str
     expires_on: str | None = None
     generated_at: str
+    evidence_basis: dict | None = None
     limitations: str
     version: int
     status: str

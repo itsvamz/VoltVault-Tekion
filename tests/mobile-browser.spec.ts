@@ -10,10 +10,10 @@ test("touch capture, pack boundary and public report on a mobile browser", async
   page,
   browserName,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Continue as manager" }).tap();
+  await page.goto("/login");
+  await page.getByRole("button", { name: /Used-car manager/ }).tap();
   await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
+    page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeVisible();
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
   await expect(navigation).toBeInViewport();

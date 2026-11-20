@@ -4,10 +4,10 @@ test("session expiry returns to sign-in and restores the manual capture", async 
   page,
   context,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Continue as technician" }).click();
+  await page.goto("/login");
+  await page.getByRole("button", { name: /Service technician/ }).click();
   await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
+    page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeVisible();
   await page.goto("/service/19/capture");
   await page.getByLabel("Reading (%)").fill("90.25");
@@ -18,7 +18,7 @@ test("session expiry returns to sign-in and restores the manual capture", async 
     .getByRole("button", { name: "Confirm and add to Timeline" })
     .click();
   await expect(page.getByRole("status")).toContainText("Your session expired");
-  await page.getByRole("button", { name: "Continue as technician" }).click();
+  await page.getByRole("button", { name: /Service technician/ }).click();
   await expect(page.getByLabel("Reading (%)")).toHaveValue("90.25");
   await expect(page.getByLabel("Odometer", { exact: true })).toHaveValue(
     "60000",
@@ -34,12 +34,12 @@ test("session expiry returns to sign-in and restores the manual capture", async 
 test("keyboard navigation reaches evidence and reviewed warranty source", async ({
   page,
 }) => {
-  await page.goto("/");
-  const manager = page.getByRole("button", { name: "Continue as manager" });
+  await page.goto("/login");
+  const manager = page.getByRole("button", { name: /Used-car manager/ });
   await manager.focus();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
+    page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeVisible();
   await page.goto("/vehicles/1");
   const warranty = page.getByRole("button", { name: "Warranty", exact: true });
@@ -61,10 +61,10 @@ test("keyboard navigation reaches evidence and reviewed warranty source", async 
 test("retry after lost confirmation response does not create another reading", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Continue as technician" }).click();
+  await page.goto("/login");
+  await page.getByRole("button", { name: /Service technician/ }).click();
   await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
+    page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeVisible();
   const before = await (await page.request.get("/api/vehicles/20")).json();
   await page.goto("/service/20/capture");

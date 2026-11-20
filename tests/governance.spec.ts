@@ -1,12 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { signIn } from "./helpers";
 test("policy versions, appraisal inputs, warranty and evidence review", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Continue as manager" }).click();
-  await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
-  ).toBeVisible();
+  await signIn(page);
   await page.goto("/settings/sources");
   await expect(
     page.getByRole("button", { name: "Save new policy version" }),

@@ -2,6 +2,10 @@
 
 A working local dealership application: service capture → pack-aware evidence Timeline → appraised offer → dealer-issued buyer report. Independent hackathon concept; no Tekion endorsement, certification, or private-system integration.
 
+## Remaining usable life
+
+The appraisal and buyer report also project how long the pack is expected to stay above **80% (retail confidence)** and **70% (warranty floor reference)**, with a mileage range from the observed annual mileage. The projection uses only the gated capacity trend — at least three comparable reading dates spanning six months, with no evidence conflicts — and says "insufficient evidence" rather than extrapolating when the gate is not met. A dealer-only 90% pricing reference appears solely in the manager appraisal, never in the buyer report or PDF. It is an illustrative estimate, not a failure prediction or warranty determination.
+
 ## Setup and start
 
 Python 3.13 and Node 22 are the tested versions.

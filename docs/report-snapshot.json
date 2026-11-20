@@ -16,6 +16,33 @@
     "quality": "limited",
     "reason": "Based on 1 independent reading dates over 0 days",
     "warnings": [],
+    "life": {
+      "method": "remaining-life-v1",
+      "status": "insufficient_evidence",
+      "reason": "A remaining-life projection needs at least three comparable reading dates spanning six months without conflicts",
+      "annual_loss_pp": null,
+      "annual_miles": null,
+      "horizon_months": 240,
+      "thresholds": [
+        {
+          "percent": 80,
+          "label": "Retail confidence",
+          "state": "not_projectable",
+          "months_range": null,
+          "miles_range": null,
+          "beyond_horizon": false
+        },
+        {
+          "percent": 70,
+          "label": "Warranty floor reference",
+          "state": "not_projectable",
+          "months_range": null,
+          "miles_range": null,
+          "beyond_horizon": false
+        }
+      ],
+      "disclaimer": "Projection continues the observed capacity trend. It is an illustrative estimate, not a failure prediction, remaining-life guarantee or manufacturer determination. Thresholds are serviceability references, not warranty eligibility tests."
+    },
     "readings": [
       {
         "date": "2026-11-16",
@@ -40,11 +67,16 @@
     "dealer": "Northline Motors · Demo data",
     "as_of": "2026-11-16",
     "expires_on": "2027-02-14",
-    "generated_at": "2026-11-17T05:33:46.298666+00:00",
+    "generated_at": "2026-11-20T16:45:17.596598+00:00",
+    "evidence_basis": {
+      "state": "history",
+      "intake_readings": 0,
+      "service_readings": 1
+    },
     "limitations": "Illustrative estimate from available capacity readings. Not independent certification or a guarantee of future performance. Current pack only.",
     "version": 1,
     "status": "published",
-    "integrity": "eb2af241ad94121427903d6642770f74b2330793d3e71d20ae4cecc29994ca92"
+    "integrity": "64d5d90eb98553b4ff2028f5ec5aa02872e0847bdbca0d06990e465ef9ddcb33"
   },
-  "url": "http://127.0.0.1:5175/r/Wi5HBBUJQS6z7Ym6iD8C_dTzpTg78K6U2nMF0Tf7QvI"
+  "url": "http://127.0.0.1:5175/r/dRTT9WwuXn5xJEFsCBosTs7gGtO9YQ_gkzL49HnwusU"
 }

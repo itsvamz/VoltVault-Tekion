@@ -2,7 +2,15 @@
 
 Updated Nov 17, 2026. This is an engineering progress estimate, not a validation or certification score. The user lifted the earlier 95% stop after their usage reset. The core capture → Timeline → appraisal → buyer report workflow is implemented and persistent.
 
-## Latest build — reference-led frontend refresh
+## Latest build — remaining usable life and a complete workspace
+
+- Added the missing half of the trade-in problem: a deterministic, evidence-gated **remaining usable life** projection. It reuses the same trend gate as the health estimate (≥3 comparable reading dates over 183 days, no conflicts), projects the 80% retail-confidence and 70% warranty-floor crossings from both interval bounds, converts them to miles using observed annual mileage, and reports "insufficient evidence" instead of extrapolating when the gate fails. The dealer 90% pricing reference is manager-only; the buyer report, public API and PDF carry only 80/70 and no valuation data. The projection is stored inside the immutable report snapshot.
+- Rendered the projection in the vehicle workspace (with a plain-language rationale), the appraisal desk, the buyer web report and the PDF, backed by 8 new domain/privacy/immutability tests.
+- Completed the workspace stylesheet: the queue, dashboard, vehicle workspace, capture, appraisal, sources, reports, preview and public report previously rendered largely unstyled (95 class names had no rules). All screens now use the existing forest/cream/mint tokens, with a fixed mobile dock and capture confirm bar, report paper, and a summary panel that shows the evidence basis rather than empty space.
+- Fixed the session-expiry journey: an expired staff session now returns to the sign-in panel and back to the interrupted capture with its draft restored, instead of dropping to the marketing page; role switching starts from a clean cache so no previous role's data can be shown.
+- Verification: **47 backend tests**, **10 Chromium browser journeys** including the real Apple Vision photo-extraction path, the WebKit touch journey, axe scans with **zero violations on seven screens**, Ruff, Prettier, TypeScript and production build. The regenerated report passes `scripts/verify_pdf.py` (snapshot values, exact-version QR, no internal valuation labels). The checked-in sample report deliberately uses the limited-evidence vehicle, so it shows the "insufficient evidence" state; the projected strong-evidence case is visible in `warranty-desktop.png` and `sources-desktop.png`. The report's QR, link and integrity block now stays together, so the strong report is two pages instead of a nearly blank third page.
+
+## Previous build — reference-led frontend refresh
 
 The requested interface refresh is implemented. Overall completion remains approximately **99%**, with the human/environment acceptance work below comprising the remaining approximately **1%**. The three user-supplied desktop/mobile banking screenshots guided spacing, navigation and visual hierarchy; no banking content or third-party logos were added.
 

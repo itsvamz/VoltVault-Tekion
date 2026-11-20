@@ -15,8 +15,11 @@ SUMMARY_FIELDS = {
     "identification_status",
     "epa_match",
     "assessment",
+    "life",
     "warranty",
     "packs",
+    "evidence_state",
+    "baseline",
 }
 READING_FIELDS = {
     "id",
@@ -31,6 +34,7 @@ READING_FIELDS = {
     "method",
     "reference_basis",
     "provenance",
+    "origin",
 }
 
 

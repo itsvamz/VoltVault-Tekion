@@ -31,14 +31,14 @@ test("core desktop and mobile screens pass automated accessibility checks", asyn
     );
     expect.soft(record.violations, name).toEqual([]);
   }
-  await page.goto("/");
+  await page.goto("/login");
   await expect(
-    page.getByRole("button", { name: "Continue as manager" }),
+    page.getByRole("button", { name: /Used-car manager/ }),
   ).toBeVisible();
   await scan("demo sign-in / desktop");
-  await page.getByRole("button", { name: "Continue as manager" }).click();
+  await page.getByRole("button", { name: /Used-car manager/ }).click();
   await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
+    page.getByRole("navigation", { name: "Main navigation" }),
   ).toBeVisible();
   await scan("work queue / desktop");
   await page.goto("/vehicles/1");
@@ -55,9 +55,9 @@ test("core desktop and mobile screens pass automated accessibility checks", asyn
   await page.goto("/service/1/capture");
   await expect(page.getByLabel("Reading (%)")).toBeVisible();
   await scan("service capture / mobile");
-  await page.goto("/work-queue");
+  await page.goto("/vehicles");
   await expect(
-    page.getByRole("heading", { name: "EV battery appraisals" }),
+    page.getByRole("heading", { name: "Vehicle inventory" }),
   ).toBeVisible();
   await scan("work queue / mobile");
   const report = await (

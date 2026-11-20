@@ -19,6 +19,17 @@ POLICY = {
     "reserve": 0,
     "label": "Illustrative dealer assumptions; not market calibrated",
 }
+LIFE_METHOD = "remaining-life-v1"
+# Serviceability references, not manufacturer definitions or failure points.
+LIFE_REFERENCES = [(80, "Retail confidence"), (70, "Warranty floor reference")]
+LIFE_HORIZON_MONTHS = 240
+# Below this observed loss, a crossing time is not reported as a projection.
+LIFE_STABLE_SLOPE = -0.15
+LIFE_DISCLAIMER = (
+    "Projection continues the observed capacity trend. It is an illustrative estimate, not a "
+    "failure prediction, remaining-life guarantee or manufacturer determination. Thresholds are "
+    "serviceability references, not warranty eligibility tests."
+)
 
 
 def assess(readings, pack, today):
@@ -88,6 +99,22 @@ def assess(readings, pack, today):
     for a, b in zip(points, points[1:]):
         if b["value"] - a["value"] > 4 or abs(b["value"] - a["value"]) > 10:
             warnings.append("Unexplained change needs review")
+    mileage = sorted(
+        (
+            (date.fromisoformat(r["date"]), float(r["miles"]))
+            for r in usable
+            if isinstance(r.get("miles"), (int, float))
+            and not isinstance(r.get("miles"), bool)
+            and math.isfinite(r["miles"])
+        ),
+        key=lambda x: x[0],
+    )
+    annual_miles = None
+    if len(mileage) >= 2:
+        days = (mileage[-1][0] - mileage[0][0]).days
+        gained = mileage[-1][1] - mileage[0][1]
+        if days >= 120 and gained > 0:
+            annual_miles = round(gained / (days / 365.25))
     base = {
         "version": METHOD,
         "count": len(points),
@@ -97,6 +124,7 @@ def assess(readings, pack, today):
         "quality": "limited",
         "warnings": warnings,
         "slope": None,
+        "annual_miles": annual_miles,
         "scenarios": [],
         "as_of": str(today),
         "method": method,
@@ -154,6 +182,76 @@ def assess(readings, pack, today):
         reason=f"Based on {len(points)} independent reading dates over {span} days",
         action="Obtain more evidence" if quality == "limited" else "Open appraisal",
         age_days=age,
+    )
+
+
+def remaining_life(assessment, reference_health=None):
+    """Months until each serviceability reference is crossed, from the observed slope.
+
+    Uses only the current-pack interval and the gated trend already computed by
+    assess(). No slope, no projection: one number is not a degradation rate.
+    """
+    thresholds = []
+    if reference_health is not None:
+        thresholds.append((float(reference_health), "Dealer pricing reference"))
+    for value, label in LIFE_REFERENCES:
+        if all(abs(float(value) - v) > 0.01 for v, _ in thresholds):
+            thresholds.append((float(value), label))
+    out = {
+        "method": LIFE_METHOD,
+        "status": "insufficient_evidence",
+        "reason": "Current-pack health estimate unavailable",
+        "annual_loss_pp": None,
+        "annual_miles": assessment.get("annual_miles"),
+        "horizon_months": LIFE_HORIZON_MONTHS,
+        "thresholds": [
+            {
+                "percent": value,
+                "label": label,
+                "state": "not_projectable",
+                "months_range": None,
+                "miles_range": None,
+                "beyond_horizon": False,
+            }
+            for value, label in thresholds
+        ],
+        "disclaimer": LIFE_DISCLAIMER,
+    }
+    if not assessment.get("interval"):
+        return out
+    slope = assessment.get("slope")
+    if slope is None:
+        return dict(
+            out,
+            reason=(
+                "A remaining-life projection needs at least three comparable reading dates "
+                "spanning six months without conflicts"
+            ),
+        )
+    out["annual_loss_pp"] = round(-slope, 2)
+    if slope >= LIFE_STABLE_SLOPE:
+        return dict(
+            out,
+            status="stable",
+            reason="No measurable capacity loss at the observed rate; no crossing projected",
+            thresholds=[dict(t, state="no_measurable_loss") for t in out["thresholds"]],
+        )
+    loss = -slope
+    lo, hi = assessment["interval"]
+    annual_miles = out["annual_miles"]
+    for row, (value, _) in zip(out["thresholds"], thresholds):
+        # The optimistic health bound gives the longest life, the pessimistic one the shortest.
+        months = [max(0, round((hi - value) / loss * 12)), max(0, round((lo - value) / loss * 12))]
+        months.sort()
+        row["months_range"] = months
+        row["state"] = "at_or_below" if months[1] == 0 else "projected"
+        row["beyond_horizon"] = months[0] > LIFE_HORIZON_MONTHS
+        if annual_miles:
+            row["miles_range"] = [round(annual_miles * m / 12 / 500) * 500 for m in months]
+    return dict(
+        out,
+        status="projected",
+        reason=f"Continues the observed {abs(slope):.1f} percentage-point-per-year loss",
     )
 
 

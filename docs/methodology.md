@@ -24,6 +24,14 @@ Evidence quality is not independent verification. No readings means insufficient
 
 Trend requires at least three dates spanning 183 days without warnings. It uses the median pairwise slope for pairs at least 60 days apart, in percentage points/year. Conditional 12/24-month intervals continue that slope and add one uncertainty point/year. They do not estimate failure time or treat warranty expiry as end of life.
 
+## Remaining usable life
+
+A projection answers a different question from health: how long the pack is likely to stay above a reference level. It reuses the gated trend, so it needs the same three comparable dates spanning six months. With no trend the product says so instead of extrapolating from one number.
+
+Thresholds are serviceability references, not manufacturer definitions: the dealer's pricing reference (manager view only), 80% retail confidence and 70% warranty floor reference. Crossing time is calculated from both ends of the current interval: the optimistic health bound gives the longest life, the pessimistic bound the shortest. Further distance uses the annual mileage observed across the eligible readings. Losses below 0.15 points/year are reported as no measurable loss rather than projected.
+
+A projection is illustrative, is not a failure prediction or remaining-life guarantee, and does not establish warranty eligibility. It informs an appraisal and a buyer conversation; it does not change policy coefficients, and it never rewrites an accepted decision or published report.
+
 ## Appraisal policy
 
 The initial demo policy uses 90% reference health, $125/point, a ±$1,500 cap and zero reserve. Managers can create immutable new policy versions with explicit coefficients/caps/reserve. These are dealer demo assumptions, not market-calibrated prices. The starting valuation and its effective date/provenance are separately saved.
