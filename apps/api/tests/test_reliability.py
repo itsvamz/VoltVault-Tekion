@@ -7,7 +7,7 @@ import time
 import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
-from apps.api.app.main import app
+from apps.api.app.main import app, _sign_session
 from apps.api.app.store import engine, get, put, all_records
 from apps.api.app.warranty import coverage
 from apps.api.app.adapters import public_data
@@ -130,16 +130,13 @@ def test_different_drafts_of_same_observation_are_deduplicated_under_race():
 
 def test_expired_and_legacy_sessions_fail_closed_without_mutation():
     c = manager()
-    token = c.cookies.get("bt_session")
     for expiry in [time.time() - 1, None]:
+        a = {"role": "manager", "dealer": "demo"}
+        if expiry is not None:
+            a["expires_at"] = expiry
+        c.cookies.set("bt_session", _sign_session(a))
         with Session(engine) as s:
-            a = get(s, "session", token)
-            a.pop("expires_at", None)
-            if expiry is not None:
-                a["expires_at"] = expiry
-            put(s, "session", token, a)
             before = len(all_records(s, "report"))
-            s.commit()
         assert c.post("/api/vehicles/23/reports").status_code == 401
         with Session(engine) as s:
             assert len(all_records(s, "report")) == before

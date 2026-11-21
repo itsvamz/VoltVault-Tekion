@@ -142,19 +142,13 @@ def test_public_adapter_cache_and_epa_ambiguity(monkeypatch):
 
 
 def test_tenant_scope():
-    from sqlalchemy.orm import Session
-    from apps.api.app.store import engine, put
+    from apps.api.app.main import _sign_session
 
-    with Session(engine) as s:
-        put(
-            s,
-            "session",
-            "other-token",
-            {"dealer": "other", "role": "manager", "expires_at": time.time() + 3600},
-        )
-        s.commit()
     other = TestClient(app)
-    other.cookies.set("bt_session", "other-token")
+    other.cookies.set(
+        "bt_session",
+        _sign_session({"dealer": "other", "role": "manager", "expires_at": time.time() + 3600}),
+    )
     assert other.get("/api/vehicles/1").status_code == 404
     assert other.post("/api/vehicles/1/reports").status_code == 404
 
@@ -557,16 +551,13 @@ def test_upload_validation_and_cross_dealer_attachment():
     Image.new("RGB", (20, 20), "white").save(b, format="PNG")
     r = client.post("/api/uploads", files={"file": ("safe.png", b.getvalue(), "image/png")})
     assert r.status_code == 200
-    with Session(engine) as s:
-        put(
-            s,
-            "session",
-            "attachment-other",
-            {"dealer": "other", "role": "technician", "expires_at": time.time() + 3600},
-        )
-        s.commit()
+    from apps.api.app.main import _sign_session
+
     other = TestClient(app)
-    other.cookies.set("bt_session", "attachment-other")
+    other.cookies.set(
+        "bt_session",
+        _sign_session({"dealer": "other", "role": "technician", "expires_at": time.time() + 3600}),
+    )
     assert other.get(r.json()["url"]).status_code == 404
 
 

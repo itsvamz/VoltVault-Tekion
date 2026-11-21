@@ -2,6 +2,8 @@ import os
 import uuid
 import secrets
 import hashlib
+import hmac
+import base64
 import json
 import io
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,8 +80,37 @@ def fail(code, msg, status=422):
     raise HTTPException(status, detail={"code": code, "message": msg})
 
 
+# Sessions are signed rather than stored: serverless instances do not share a
+# filesystem, so a database-backed token would not survive the next request.
+_SESSION_SECRET = os.getenv("SESSION_SECRET", "voltvault-demo-session-key").encode()
+
+
+def _b64(raw: bytes) -> bytes:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=")
+
+
+def _sign_session(payload: dict) -> str:
+    body = _b64(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+    sig = _b64(hmac.new(_SESSION_SECRET, body, hashlib.sha256).digest())
+    return (body + b"." + sig).decode()
+
+
+def _verify_session(token: str):
+    try:
+        body, sig = token.encode().split(b".", 1)
+    except ValueError:
+        return None
+    expected = _b64(hmac.new(_SESSION_SECRET, body, hashlib.sha256).digest())
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        return json.loads(base64.urlsafe_b64decode(body + b"=" * (-len(body) % 4)))
+    except Exception:
+        return None
+
+
 def actor(request: Request, s=Depends(db)):
-    a = get(s, "session", request.cookies.get("bt_session", ""))
+    a = _verify_session(request.cookies.get("bt_session", ""))
     if not a or a.get("expires_at", 0) <= __import__("time").time():
         fail("session_required", "Choose a demo role to continue", 401)
     origin = request.headers.get("origin", "")
@@ -166,9 +197,8 @@ class Login(BaseModel):
 def login(body: Login, response: Response, s=Depends(db)):
     if os.getenv("DEMO_MODE", "true") != "true":
         fail("demo_disabled", "Demo sessions are disabled", 403)
-    token = secrets.token_urlsafe(32)
     a = {"role": body.role, "dealer": "demo", "expires_at": __import__("time").time() + 28800}
-    put(s, "session", token, a)
+    token = _sign_session(a)
     _secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     response.set_cookie(
         "bt_session",
