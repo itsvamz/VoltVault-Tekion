@@ -209,7 +209,7 @@ type Payload = {
   limitations: string;
 };
 const qc = new QueryClient();
-const API_BASE = "https://api-git-main-vamika-mendirattas-projects.vercel.app";
+const API_BASE = import.meta.env.VITE_API_URL || "";
 
 async function api<T = any>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(API_BASE + "/api" + path, {

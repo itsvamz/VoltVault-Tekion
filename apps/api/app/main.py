@@ -31,9 +31,18 @@ seed_warranty_examples()
 seed_metadata()
 app = FastAPI(title="Battery Timeline", version="0.1.0")
 
+_allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://volt-vault-tekion.vercel.app",
+]
+if os.getenv("PUBLIC_BASE_URL"):
+    _allowed_origins.append(os.getenv("PUBLIC_BASE_URL"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://volt-vault-tekion.vercel.app"],
+    allow_origins=_allowed_origins,
+    allow_origin_regex=r"https://.*-vamika-mendirattas-projects\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,16 +82,12 @@ def actor(request: Request, s=Depends(db)):
     a = get(s, "session", request.cookies.get("bt_session", ""))
     if not a or a.get("expires_at", 0) <= __import__("time").time():
         fail("session_required", "Choose a demo role to continue", 401)
+    origin = request.headers.get("origin", "")
     if (
         request.method not in ("GET", "HEAD")
-        and request.headers.get("origin")
-        and request.headers["origin"]
-        not in (
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "https://volt-vault-tekion.vercel.app",
-            os.getenv("PUBLIC_BASE_URL", "http://localhost:5173"),
-        )
+        and origin
+        and origin not in _allowed_origins
+        and not __import__("re").match(r"https://.*-vamika-mendirattas-projects\.vercel\.app$", origin)
     ):
         fail("origin", "Untrusted request origin", 403)
     return a
@@ -164,13 +169,14 @@ def login(body: Login, response: Response, s=Depends(db)):
     token = secrets.token_urlsafe(32)
     a = {"role": body.role, "dealer": "demo", "expires_at": __import__("time").time() + 28800}
     put(s, "session", token, a)
+    _secure = os.getenv("COOKIE_SECURE", "true").lower() == "true"
     response.set_cookie(
         "bt_session",
         token,
         httponly=True,
-        samesite="none",
+        samesite="none" if _secure else "lax",
         max_age=28800,
-        secure=True,
+        secure=_secure,
     )
     return a
 
