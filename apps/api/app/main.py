@@ -169,12 +169,12 @@ def login(body: Login, response: Response, s=Depends(db)):
     token = secrets.token_urlsafe(32)
     a = {"role": body.role, "dealer": "demo", "expires_at": __import__("time").time() + 28800}
     put(s, "session", token, a)
-    _secure = os.getenv("COOKIE_SECURE", "true").lower() == "true"
+    _secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     response.set_cookie(
         "bt_session",
         token,
         httponly=True,
-        samesite="none" if _secure else "lax",
+        samesite="lax",
         max_age=28800,
         secure=_secure,
     )
