@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/index.py": {
-      "runtime": "@vercel/python"
+      "includeFiles": "apps/api/**"
     }
   },
   "rewrites": [

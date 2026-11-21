@@ -1,11 +1,14 @@
 """Server-owned binary storage; replace this boundary for object storage."""
 
 from pathlib import Path
+import os
 import re
+
+_DEFAULT_ROOT = "/tmp/uploads" if os.getenv("VERCEL") == "1" else "data/uploads"
 
 
 class LocalImageStore:
-    def __init__(self, root="data/uploads"):
+    def __init__(self, root=_DEFAULT_ROOT):
         self.root = Path(root)
 
     def path(self, id):
